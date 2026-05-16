@@ -5,7 +5,7 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
-	"github.com/ppawlinski/ChessWithDice/config"
+	"github.com/ppawlinski/DiceyChess/config"
 )
 
 type Assets struct {

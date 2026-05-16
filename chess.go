@@ -13,7 +13,7 @@ import (
 	"github.com/ebitenui/ebitenui/widget"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
-	chessInput "github.com/ppawlinski/ChessWithDice/input"
+	chessInput "github.com/ppawlinski/DiceyChess/input"
 	"golang.org/x/image/font/gofont/goregular"
 )
 

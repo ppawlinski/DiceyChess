@@ -2,8 +2,8 @@ package main
 
 import (
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/ppawlinski/ChessWithDice/assets"
-	"github.com/ppawlinski/ChessWithDice/config"
+	"github.com/ppawlinski/DiceyChess/assets"
+	"github.com/ppawlinski/DiceyChess/config"
 )
 
 type Color int8

@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/ppawlinski/ChessWithDice/assets"
+	"github.com/ppawlinski/DiceyChess/assets"
 )
 
 func main() {
