@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Szachy z Kostką - Mockup</title>
+    <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+
+    <!-- Kontener, w którym TS będzie rysował widoki -->
+    <div id="app"></div>
+
+    <!-- Panel deweloperski do szybkiego testowania widoków -->
+    <div id="dev-router">
+        <button onclick="window.switchView('login')">Widok: Logowanie</button>
+        <button onclick="window.switchView('lobby')">Widok: Lobby</button>
+        <button onclick="window.switchView('game')">Widok: Gra</button>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
