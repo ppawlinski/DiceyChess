@@ -3,12 +3,14 @@ package game
 import "math/rand"
 
 type Dice struct {
-	rng *rand.Rand
+	rng  *rand.Rand
+	seed int64
 }
 
 func NewDice(seed int64) *Dice {
 	return &Dice{
-		rng: rand.New(rand.NewSource(seed)),
+		rng:  rand.New(rand.NewSource(seed)),
+		seed: seed,
 	}
 }
 

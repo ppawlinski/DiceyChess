@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"github.com/ppawlinski/DiceyChess/server/db"
+	"github.com/ppawlinski/DiceyChess/server/game"
 )
 
 var upgrader = websocket.Upgrader{
@@ -28,17 +30,23 @@ type Client struct {
 }
 
 type Hub struct {
-	clients    map[int64]*Client
-	mu         sync.RWMutex
-	Register   chan *Client
-	Unregister chan *Client
+	clients     map[int64]*Client
+	gameClients map[int64][]int64 // gameID → []playerID
+	mu          sync.RWMutex
+	Register    chan *Client
+	Unregister  chan *Client
+	GameManager *game.GameManager
+	DB          *db.DB
 }
 
-func New() *Hub {
+func New(gm *game.GameManager, database *db.DB) *Hub {
 	return &Hub{
-		clients:    make(map[int64]*Client),
-		Register:   make(chan *Client),
-		Unregister: make(chan *Client),
+		clients:     make(map[int64]*Client),
+		gameClients: make(map[int64][]int64),
+		Register:    make(chan *Client),
+		Unregister:  make(chan *Client),
+		GameManager: gm,
+		DB:          database,
 	}
 }
 
@@ -154,5 +162,162 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request, playerID int64, pl
 }
 
 func (h *Hub) handleMessage(c *Client, msg Message) {
-	log.Printf("wiadomość od %s: %s", c.PlayerName, msg.Type)
+	switch msg.Type {
+	case "get_legal_moves":
+		h.handleGetLegalMoves(c, msg.Payload)
+	case "make_move":
+		h.handleMakeMove(c, msg.Payload)
+	case "end_turn":
+		h.handleEndTurn(c, msg.Payload)
+	}
+}
+
+func (h *Hub) handleGetLegalMoves(c *Client, payload json.RawMessage) {
+	var req struct {
+		GameID int64            `json:"game_id"`
+		From   game.Coordinates `json:"from"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(c, "invalid payload")
+		return
+	}
+
+	g, ok := h.GameManager.Get(req.GameID)
+	if !ok {
+		h.sendError(c, "game not found")
+		return
+	}
+
+	moves, err := g.GetLegalMoves(req.From)
+	if err != nil {
+		h.sendError(c, err.Error())
+		return
+	}
+
+	responsePayload, _ := json.Marshal(map[string]any{
+		"game_id": req.GameID,
+		"from":    req.From,
+		"moves":   moves,
+	})
+	c.send <- Message{Type: "legal_moves", Payload: responsePayload}
+}
+
+func (h *Hub) handleMakeMove(c *Client, payload json.RawMessage) {
+	var req struct {
+		GameID    int64            `json:"game_id"`
+		From      game.Coordinates `json:"from"`
+		To        game.Coordinates `json:"to"`
+		PromoteTo *game.PieceType  `json:"promote_to"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(c, "invalid payload")
+		return
+	}
+
+	g, ok := h.GameManager.Get(req.GameID)
+	if !ok {
+		h.sendError(c, "game not found")
+		return
+	}
+
+	err := g.MakeMove(game.MoveRequest{
+		From:      req.From,
+		To:        req.To,
+		PromoteTo: req.PromoteTo,
+	})
+	if err != nil {
+		h.sendError(c, err.Error())
+		return
+	}
+
+	// zapisz stan do bazy
+	state, err := g.Serialize()
+	if err == nil {
+		h.DB.UpdateGameState(req.GameID, state)
+	}
+
+	// jeśli gra skończona
+	if g.State.IsOver {
+		result := "draw"
+		if g.State.Winner != nil {
+			if *g.State.Winner == game.White {
+				result = "white"
+			} else {
+				result = "black"
+			}
+		}
+		h.DB.FinishGame(req.GameID, result)
+		h.GameManager.Remove(req.GameID)
+	}
+
+	// wyślij nowy stan obu graczom
+	h.broadcastGameState(req.GameID, g)
+}
+
+func (h *Hub) handleEndTurn(c *Client, payload json.RawMessage) {
+	var req struct {
+		GameID int64 `json:"game_id"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(c, "invalid payload")
+		return
+	}
+
+	g, ok := h.GameManager.Get(req.GameID)
+	if !ok {
+		h.sendError(c, "game not found")
+		return
+	}
+
+	if err := g.EndTurn(); err != nil {
+		h.sendError(c, err.Error())
+		return
+	}
+
+	state, err := g.Serialize()
+	if err == nil {
+		h.DB.UpdateGameState(req.GameID, state)
+	}
+
+	h.broadcastGameState(req.GameID, g)
+}
+
+func (h *Hub) broadcastGameState(gameID int64, g *game.Game) {
+	h.mu.RLock()
+	players := h.gameClients[gameID]
+	h.mu.RUnlock()
+
+	payload, _ := json.Marshal(map[string]any{
+		"game_id": gameID,
+		"board":   g.Board,
+		"state":   g.State,
+	})
+	msg := Message{Type: "game_state", Payload: payload}
+
+	for _, playerID := range players {
+		h.SendTo(playerID, msg)
+	}
+}
+
+func (h *Hub) JoinGame(gameID, playerID int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.gameClients[gameID] = append(h.gameClients[gameID], playerID)
+}
+
+func (h *Hub) LeaveGame(gameID, playerID int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	players := h.gameClients[gameID]
+	for i, id := range players {
+		if id == playerID {
+			h.gameClients[gameID] = append(players[:i], players[i+1:]...)
+			break
+		}
+	}
+}
+
+func (h *Hub) sendError(c *Client, msg string) {
+	payload, _ := json.Marshal(map[string]string{"error": msg})
+	c.send <- Message{Type: "error", Payload: payload}
 }

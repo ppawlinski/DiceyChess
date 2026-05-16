@@ -46,6 +46,7 @@ func (d *DB) migrate() error {
 			status      TEXT NOT NULL DEFAULT 'ongoing',
 			result      TEXT,
 			pgn         TEXT,
+			state       TEXT,
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			finished_at DATETIME
 		);
@@ -110,27 +111,26 @@ func (d *DB) GetAllPlayers() ([]models.Player, error) {
 	return players, nil
 }
 
-func (d *DB) CreateGame(whiteID, blackID int64) (*models.Game, error) {
+func (d *DB) CreateGame(whiteID, blackID int64, state string) (*models.Game, error) {
 	res, err := d.conn.Exec(`
-		INSERT INTO games (white_id, black_id, status)
-		VALUES (?, ?, 'ongoing')
-	`, whiteID, blackID)
+		INSERT INTO games (white_id, black_id, status, state)
+		VALUES (?, ?, 'ongoing', ?)
+	`, whiteID, blackID, state)
 	if err != nil {
 		return nil, err
 	}
-
 	id, _ := res.LastInsertId()
 	return d.GetGame(id)
 }
 
 func (d *DB) GetGame(id int64) (*models.Game, error) {
 	row := d.conn.QueryRow(`
-		SELECT id, white_id, black_id, status, result, pgn, created_at, finished_at
+		SELECT id, white_id, black_id, status, result, pgn, state, created_at, finished_at
 		FROM games WHERE id = ?
 	`, id)
 
 	var g models.Game
-	err := row.Scan(&g.ID, &g.WhiteID, &g.BlackID, &g.Status, &g.Result, &g.PGN, &g.CreatedAt, &g.FinishedAt)
+	err := row.Scan(&g.ID, &g.WhiteID, &g.BlackID, &g.Status, &g.Result, &g.PGN, &g.State, &g.CreatedAt, &g.FinishedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -142,7 +142,7 @@ func (d *DB) GetGame(id int64) (*models.Game, error) {
 
 func (d *DB) GetOngoingGames() ([]models.Game, error) {
 	rows, err := d.conn.Query(`
-		SELECT id, white_id, black_id, status, result, pgn, created_at, finished_at
+		SELECT id, white_id, black_id, status, result, pgn, state, created_at, finished_at
 		FROM games WHERE status = 'ongoing'
 		ORDER BY created_at DESC
 	`)
@@ -154,10 +154,23 @@ func (d *DB) GetOngoingGames() ([]models.Game, error) {
 	var games []models.Game
 	for rows.Next() {
 		var g models.Game
-		if err := rows.Scan(&g.ID, &g.WhiteID, &g.BlackID, &g.Status, &g.Result, &g.PGN, &g.CreatedAt, &g.FinishedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.WhiteID, &g.BlackID, &g.Status, &g.Result, &g.PGN, &g.State, &g.CreatedAt, &g.FinishedAt); err != nil {
 			return nil, err
 		}
 		games = append(games, g)
 	}
 	return games, nil
+}
+
+func (d *DB) UpdateGameState(id int64, state string) error {
+	_, err := d.conn.Exec(`UPDATE games SET state = ? WHERE id = ?`, state, id)
+	return err
+}
+
+func (d *DB) FinishGame(id int64, result string) error {
+	_, err := d.conn.Exec(`
+		UPDATE games SET status = 'finished', result = ?, finished_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, result, id)
+	return err
 }

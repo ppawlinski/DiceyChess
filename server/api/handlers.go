@@ -8,13 +8,15 @@ import (
 	"time"
 
 	"github.com/ppawlinski/DiceyChess/server/db"
+	"github.com/ppawlinski/DiceyChess/server/game"
 	"github.com/ppawlinski/DiceyChess/server/hub"
 	"github.com/ppawlinski/DiceyChess/server/models"
 )
 
 type Handler struct {
-	DB  *db.DB
-	Hub *hub.Hub
+	DB          *db.DB
+	Hub         *hub.Hub
+	GameManager *game.GameManager
 }
 
 func generateToken() (string, error) {
@@ -138,21 +140,32 @@ func (h *Handler) CreateGame(w http.ResponseWriter, r *http.Request) {
 		whiteID, blackID = blackID, whiteID
 	}
 
-	game, err := h.DB.CreateGame(whiteID, blackID)
+	// stwórz grę z początkowym stanem
+	seed := time.Now().UnixNano()
+	newGame := game.NewGame(seed)
+	state, err := newGame.Serialize()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server error"})
 		return
 	}
 
+	dbGame, err := h.DB.CreateGame(whiteID, blackID, state)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server error"})
+		return
+	}
+
+	h.GameManager.Add(dbGame.ID, newGame)
+
 	// powiadom przeciwnika przez WebSocket jeśli online
-	payload, _ := json.Marshal(game)
+	payload, _ := json.Marshal(dbGame)
 	h.Hub.SendTo(req.OpponentID, hub.Message{
 		Type:    "game_started",
 		Payload: payload,
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"game": game,
+		"game": dbGame,
 	})
 }
 

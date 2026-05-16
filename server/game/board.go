@@ -1,5 +1,7 @@
 package game
 
+import "encoding/json"
+
 type Board struct {
 	fields       [BoardSize][BoardSize]Movable
 	kingPosition [ColorLength]Coordinates
@@ -88,4 +90,68 @@ func (b *Board) Reset() {
 		b.Set(Coordinates{1, col}, NewPawn(Black))
 		b.Set(Coordinates{6, col}, NewPawn(White))
 	}
+}
+
+func (b *Board) MarshalJSON() ([]byte, error) {
+	type fieldJSON struct {
+		Type      *PieceType `json:"type"`
+		Color     *Color     `json:"color"`
+		FirstMove bool       `json:"first_move"`
+	}
+
+	fields := [BoardSize][BoardSize]*fieldJSON{}
+	for row := range b.fields {
+		for col := range b.fields[row] {
+			p := b.fields[row][col]
+			if p == nil {
+				continue
+			}
+			pt := p.Type()
+			c := p.Piece().Color
+			fields[row][col] = &fieldJSON{
+				Type:      &pt,
+				Color:     &c,
+				FirstMove: p.Piece().FirstMove,
+			}
+		}
+	}
+
+	return json.Marshal(map[string]any{
+		"fields":        fields,
+		"king_position": b.kingPosition,
+	})
+}
+
+func (b *Board) UnmarshalJSON(data []byte) error {
+	type fieldJSON struct {
+		Type      *PieceType `json:"type"`
+		Color     *Color     `json:"color"`
+		FirstMove bool       `json:"first_move"`
+	}
+
+	var raw struct {
+		Fields       [BoardSize][BoardSize]*fieldJSON `json:"fields"`
+		KingPosition [ColorLength]Coordinates         `json:"king_position"`
+	}
+
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	b.kingPosition = raw.KingPosition
+	for row := range raw.Fields {
+		for col := range raw.Fields[row] {
+			f := raw.Fields[row][col]
+			if f == nil || f.Type == nil || f.Color == nil {
+				continue
+			}
+			piece := NewPieceByType(*f.Color, *f.Type)
+			if piece != nil {
+				piece.Piece().FirstMove = f.FirstMove
+				b.fields[row][col] = piece
+			}
+		}
+	}
+
+	return nil
 }

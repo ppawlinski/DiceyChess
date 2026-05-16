@@ -16,6 +16,7 @@ type Game struct {
 	Status     string     `json:"status"`
 	Result     *string    `json:"result"`
 	PGN        *string    `json:"pgn"`
+	State      *string    `json:"-"`
 	CreatedAt  time.Time  `json:"created_at"`
 	FinishedAt *time.Time `json:"finished_at"`
 }
