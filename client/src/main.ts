@@ -137,8 +137,7 @@ async function createGame(opponentId: number): Promise<void> {
 
         alert(`Gra o ID ${gameId} została utworzona! Przełączam na widok szachownicy.`);
 
-        // Przełączamy użytkownika do ekranu gry
-        switchView('game');
+        joinGame(gameId);
 
         // TODO: W tym miejscu w przyszłości zainicjujemy połączenie WebSocket dla konkretnej gry
         // initGameWebSocket(gameId);
@@ -249,7 +248,6 @@ function getPlayerNameById(id: number): string {
     const player = allPlayers.find(p => p.id === id || p.ID === id);
     return player ? (player.name || player.Name) : `Gracz #${id}`;
 }
-
 function renderLobbyLists() {
     const onlineList = document.getElementById('online-players-list');
     const offlineList = document.getElementById('offline-players-list');
@@ -281,7 +279,7 @@ function renderLobbyLists() {
         onlineList.innerHTML = onlineUsers.map(p => `
             <li class="player-item" data-id="${p.id || p.ID}" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                 <span>🟢 <b>${p.name || p.Name}</b></span>
-                <button class="play-with-btn">Wyzwij</button>
+                <button class="play-with-btn" onclick="handleChallengeClick(${p.id || p.ID})">Wyzwij</button>
             </li>
         `).join('');
     }
@@ -297,52 +295,77 @@ function renderLobbyLists() {
         `).join('');
     }
 
-    // 3. Renderowanie trwających gier z zamianą ID na Nicknamy
+    // 3. Renderowanie trwających gier (teraz bezpośrednio, bo backend już je przefiltrował)
     if (activeGames.length === 0) {
-        gamesList.innerHTML = `<li style="color: #aaa; font-style: italic; font-size: 14px;">Nie uczestniczysz w żadnej grze.</li>`;
+        gamesList.innerHTML = `<li style="color: #aaa; font-style: italic; font-size: 14px;">Nie uczestniczysz obecnie w żadnej grze.</li>`;
     } else {
         gamesList.innerHTML = activeGames.map(g => {
             const gameId = g.game_id || g.id || g.ID;
 
-            // Wyciągamy ID białego i czarnego gracza z struktury Go
             const whiteId = g.white_id || g.WhiteID || g.white_player_id;
             const blackId = g.black_id || g.BlackID || g.black_player_id;
 
-            // Mapujemy ID na czytelne nicki
             const whiteName = getPlayerNameById(whiteId);
             const blackName = getPlayerNameById(blackId);
 
             return `
                 <li style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; background: #2a2a2a; padding: 6px 10px; border-radius: 4px;">
                     <span>🏆 Mecz #${gameId}: <b style="color: #fff;">${whiteName}</b> vs <b>${blackName}</b></span>
-                    <button class="join-game-btn" data-game-id="${gameId}">Dołącz</button>
+                    <button class="join-game-btn" onclick="handleJoinClick(${gameId})">Dołącz</button>
                 </li>
             `;
         }).join('');
     }
-
-    setupLobbyListEvents();
 }
 
-// Zmiana w podpinaniu eventu listy (uproszczenie, bo nasłuchujemy na online-players-list)
-function setupLobbyListEvents() {
-    document.getElementById('online-players-list')?.addEventListener('click', async (e) => {
-        const target = e.target as HTMLElement;
-        if (target.classList.contains('play-with-btn')) {
-            const item = target.closest('.player-item') as HTMLElement;
-            const oppId = parseInt(item?.dataset.id || '');
-            if (oppId) await createGame(oppId);
-        }
+
+function handleJoinClick(gameId: number) {
+    joinGame(gameId);
+}
+
+// Ta funkcja zostanie wywołana przy kliknięciu przycisku "Wyzwij"
+async function handleChallengeClick(opponentId: number) {
+    if (!currentPlayer) return;
+
+    // 1. BLOKADA DUPLIKATÓW: Szukamy w aktualnej liście aktywnych gier, 
+    // czy już gramy z tym konkretnym użytkownikiem
+    const existingGame = activeGames.find(g => {
+        const whiteId = g.white_id || g.WhiteID || g.white_player_id;
+        const blackId = g.black_id || g.BlackID || g.black_player_id;
+
+        // Sprawdzamy czy to mecz Ja vs Przeciwnik lub Przeciwnik vs Ja
+        return (whiteId === currentPlayer!.id && blackId === opponentId) ||
+            (blackId === currentPlayer!.id && whiteId === opponentId);
     });
 
-    document.getElementById('active-games-list')?.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        if (target.classList.contains('join-game-btn')) {
-            const gameId = parseInt(target.dataset.gameId || '');
-            if (gameId) joinGame(gameId);
-        }
-    });
+    if (existingGame) {
+        const gameId = existingGame.game_id || existingGame.id || existingGame.ID;
+        console.log(`Gra z tym użytkownikiem już trwa (Mecz #${gameId}). Automatycznie dołączam...`);
+        alert(`Masz już aktywną grę z tym graczem! Przekierowuję do meczu #${gameId}.`);
+        joinGame(gameId);
+        return; // Przerywamy działanie, nie wysyłamy POST-a!
+    }
+
+    // 2. Jeśli nie ma duplikatu, blokujemy przycisk (wizualnie) i tworzymy nową grę
+    console.log(`Brak trwających gier z użytkownikiem ${opponentId}. Tworzę nową grę...`);
+
+    // Pobieramy przycisk, który został kliknięty, żeby dać feedback wizualny
+    const btn = document.querySelector(`button[onclick="handleChallengeClick(${opponentId})"]`) as HTMLButtonElement;
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Tworzenie...';
+    }
+
+    await createGame(opponentId);
+
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Wyzwij';
+    }
 }
+// Przypisujemy funkcje do globalnego obiektu window
+(window as any).handleChallengeClick = handleChallengeClick;
+(window as any).handleJoinClick = handleJoinClick;
 
 function joinGame(gameId: number) {
     console.log(`Próba dołączenia do gry o ID: ${gameId}`);
@@ -381,13 +404,6 @@ function initGame() {
     // Stan gry na potrzeby makiety (wybrana pozycja startowa)
     let selectedSquareIndex: number | null = null;
 
-    const startingPieces: { [key: number]: string } = {
-        0: '♜', 1: '♞', 2: '♝', 3: '♛', 4: '♚', 5: '♝', 6: '♞', 7: '♜',
-        8: '♟', 9: '♟', 10: '♟', 11: '♟', 12: '♟', 13: '♟', 14: '♟', 15: '♟',
-        48: '♙', 49: '♙', 50: '♙', 51: '♙', 52: '♙', 53: '♙', 54: '♙', 55: '♙',
-        56: '♖', 57: '♘', 58: '♗', 59: '♕', 60: '♔', 61: '♗', 62: '♘', 63: '♖'
-    };
-
     // 1. Generowanie planszy 8x8
     for (let i = 0; i < 64; i++) {
         const row = Math.floor(i / 8);
@@ -397,17 +413,6 @@ function initGame() {
         const square = document.createElement('div');
         square.classList.add('square', isLight ? 'light' : 'dark');
         square.dataset.index = i.toString();
-
-        if (startingPieces[i]) {
-            // Każdą figurę zawijamy w osobny span, aby łatwo ją przesuwać (Drag&Drop)
-            const piece = document.createElement('span');
-            piece.classList.add('piece');
-            piece.textContent = startingPieces[i];
-            square.appendChild(piece);
-
-            // Podpinamy zdarzenia Pointer Events do figury
-            setupPieceDragAndDrop(piece, i);
-        }
 
         // Mechanizm obsługi kliknięć (alternatywa dla Drag&Drop, idealna na Mobile)
         square.addEventListener('click', (e) => {
@@ -444,127 +449,6 @@ function initGame() {
                 selectedSquareIndex = null;
             }
         }
-    }
-
-    // 3. Obsługa Drag & Drop za pomocą Pointer Events (PC & Mobile)
-    function setupPieceDragAndDrop(piece: HTMLElement, startIndex: number) {
-        piece.addEventListener('dragstart', (e) => e.preventDefault());
-
-        // Nasłuchujemy na parentSquare (czyli na kafelku), bo figura ma pointer-events: none
-        const parentSquare = piece.parentElement!;
-
-        parentSquare.addEventListener('pointerdown', (e) => {
-            // Interweniujemy tylko, jeśli na kafelku jest nasza figura
-            if (!parentSquare.contains(piece)) return;
-
-            const initialIndex = parseInt(parentSquare.dataset.index!);
-            const startX = e.clientX;
-            const startY = e.clientY;
-
-            let isDragging = false;
-            const rect = piece.getBoundingClientRect();
-
-            const moveAt = (clientX: number, clientY: number) => {
-                piece.style.left = clientX - rect.width / 2 + 'px';
-                piece.style.top = clientY - rect.height / 2 + 'px';
-            };
-
-            function onPointerMove(ev: PointerEvent) {
-                const deltaX = ev.clientX - startX;
-                const deltaY = ev.clientY - startY;
-                const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-
-                // Jeśli ruch jest mniejszy niż 7 pikseli, pozwalamy działać zwykłemu kliknięciu na kafelku
-                if (!isDragging && distance < 7) {
-                    return;
-                }
-
-                if (!isDragging) {
-                    isDragging = true;
-                    e.stopPropagation(); // Blokujemy aktywację kliknięcia, bo zaczynamy drag
-
-                    document.querySelectorAll('.square').forEach(s => s.classList.remove('selected'));
-                    parentSquare.classList.add('selected');
-
-                    // Aktywujemy fizyczność figury na czas przeciągania
-                    piece.classList.add('dragging');
-                    piece.style.width = rect.width + 'px';
-                    piece.style.height = rect.height + 'px';
-                    piece.style.position = 'fixed';
-                    piece.style.zIndex = '1000';
-                }
-
-                moveAt(ev.clientX, ev.clientY);
-            }
-
-            document.addEventListener('pointermove', onPointerMove);
-
-            const onPointerUp = function (ev: PointerEvent) {
-                document.removeEventListener('pointermove', onPointerMove);
-                document.removeEventListener('pointerup', onPointerUp);
-
-                if (!isDragging) {
-                    // Jeśli nie przesunięto o 7px, nie robimy nic. 
-                    // Przeglądarka sama naturalnie odpali standardowy 'click' na kafelku!
-                    return;
-                }
-
-                ev.preventDefault();
-                ev.stopPropagation();
-
-                // Na czas szukania pola docelowego na moment wyłączamy widoczność figury dla elementFromPoint
-                piece.style.display = 'none';
-                const dropTarget = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement;
-                const targetSquare = dropTarget?.closest('.square') as HTMLElement;
-                piece.style.display = '';
-
-                // Reset stylów
-                piece.classList.remove('dragging');
-                piece.style.position = '';
-                piece.style.zIndex = '';
-                piece.style.left = '';
-                piece.style.top = '';
-                piece.style.width = '';
-                piece.style.height = '';
-                parentSquare.classList.remove('selected');
-
-                if (targetSquare) {
-                    const targetIndex = parseInt(targetSquare.dataset.index!);
-                    if (initialIndex !== targetIndex) {
-                        executeMove(initialIndex, targetIndex);
-                    }
-                }
-            };
-
-            document.addEventListener('pointerup', onPointerUp);
-        });
-    }
-
-    // Pomocnicza funkcja, która zamienia indeks tablicy (0-63) na strukturę {"Row": x, "Col": y} dla Go
-    function indexToCoords(index: number) {
-        return {
-            Row: Math.floor(index / 8),
-            Col: index % 8
-        };
-    }
-    // 4. Wspólna funkcja wykonująca fizyczne przeniesienie figury w DOM
-    function executeMove(fromIndex: number, toIndex: number) {
-
-        if (!activeGameId) {
-            console.error("Brak aktywnego ID gry!");
-            return;
-        }
-        const fromSquare = board.querySelector(`[data-index="${fromIndex}"]`) as HTMLElement;
-        const toSquare = board.querySelector(`[data-index="${toIndex}"]`) as HTMLElement;
-        const movingPiece = fromSquare.querySelector('.piece');
-
-        // Wysyłamy ruch do serwera w formacie:
-        // {"type": "make_move", "payload": {"game_id": 1, "from": {"Row": 6, "Col": 0}, "to": {"Row": 5, "Col": 0}}}
-        sendWSMessage("make_move", {
-            game_id: activeGameId,
-            from: indexToCoords(fromIndex),
-            to: indexToCoords(toIndex)
-        });
     }
 
     // --- LOGIKA REPRODUKCJI KROPEK NA KOSTCE (BEZ ZMIAN) ---
@@ -611,6 +495,128 @@ function initGame() {
     });
 }
 
+// 3. Obsługa Drag & Drop za pomocą Pointer Events (PC & Mobile)
+function setupPieceDragAndDrop(piece: HTMLElement, startIndex: number) {
+    piece.addEventListener('dragstart', (e) => e.preventDefault());
+
+    // Nasłuchujemy na parentSquare (czyli na kafelku), bo figura ma pointer-events: none
+    const parentSquare = piece.parentElement!;
+
+    parentSquare.addEventListener('pointerdown', (e) => {
+        // Interweniujemy tylko, jeśli na kafelku jest nasza figura
+        if (!parentSquare.contains(piece)) return;
+
+        const initialIndex = parseInt(parentSquare.dataset.index!);
+        const startX = e.clientX;
+        const startY = e.clientY;
+
+        let isDragging = false;
+        const rect = piece.getBoundingClientRect();
+
+        const moveAt = (clientX: number, clientY: number) => {
+            piece.style.left = clientX - rect.width / 2 + 'px';
+            piece.style.top = clientY - rect.height / 2 + 'px';
+        };
+
+        function onPointerMove(ev: PointerEvent) {
+            const deltaX = ev.clientX - startX;
+            const deltaY = ev.clientY - startY;
+            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+            // Jeśli ruch jest mniejszy niż 7 pikseli, pozwalamy działać zwykłemu kliknięciu na kafelku
+            if (!isDragging && distance < 7) {
+                return;
+            }
+
+            if (!isDragging) {
+                isDragging = true;
+                e.stopPropagation(); // Blokujemy aktywację kliknięcia, bo zaczynamy drag
+
+                document.querySelectorAll('.square').forEach(s => s.classList.remove('selected'));
+                parentSquare.classList.add('selected');
+
+                // Aktywujemy fizyczność figury na czas przeciągania
+                piece.classList.add('dragging');
+                piece.style.width = rect.width + 'px';
+                piece.style.height = rect.height + 'px';
+                piece.style.position = 'fixed';
+                piece.style.zIndex = '1000';
+            }
+
+            moveAt(ev.clientX, ev.clientY);
+        }
+
+        document.addEventListener('pointermove', onPointerMove);
+
+        const onPointerUp = function (ev: PointerEvent) {
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+
+            if (!isDragging) {
+                // Jeśli nie przesunięto o 7px, nie robimy nic. 
+                // Przeglądarka sama naturalnie odpali standardowy 'click' na kafelku!
+                return;
+            }
+
+            ev.preventDefault();
+            ev.stopPropagation();
+
+            // Na czas szukania pola docelowego na moment wyłączamy widoczność figury dla elementFromPoint
+            piece.style.display = 'none';
+            const dropTarget = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement;
+            const targetSquare = dropTarget?.closest('.square') as HTMLElement;
+            piece.style.display = '';
+
+            // Reset stylów
+            piece.classList.remove('dragging');
+            piece.style.position = '';
+            piece.style.zIndex = '';
+            piece.style.left = '';
+            piece.style.top = '';
+            piece.style.width = '';
+            piece.style.height = '';
+            parentSquare.classList.remove('selected');
+
+            if (targetSquare) {
+                const targetIndex = parseInt(targetSquare.dataset.index!);
+                if (initialIndex !== targetIndex) {
+                    executeMove(initialIndex, targetIndex);
+                }
+            }
+        };
+
+        document.addEventListener('pointerup', onPointerUp);
+    });
+}
+
+// Pomocnicza funkcja, która zamienia indeks tablicy (0-63) na strukturę {"Row": x, "Col": y} dla Go
+function indexToCoords(index: number) {
+    return {
+        Row: Math.floor(index / 8),
+        Col: index % 8
+    };
+}
+// 4. Wspólna funkcja wykonująca fizyczne przeniesienie figury w DOM
+function executeMove(fromIndex: number, toIndex: number) {
+    const board = document.getElementById('board')!;
+
+    if (!activeGameId) {
+        console.error("Brak aktywnego ID gry!");
+        return;
+    }
+    const fromSquare = board.querySelector(`[data-index="${fromIndex}"]`) as HTMLElement;
+    const toSquare = board.querySelector(`[data-index="${toIndex}"]`) as HTMLElement;
+    const movingPiece = fromSquare.querySelector('.piece');
+
+    // Wysyłamy ruch do serwera w formacie:
+    // {"type": "make_move", "payload": {"game_id": 1, "from": {"Row": 6, "Col": 0}, "to": {"Row": 5, "Col": 0}}}
+    sendWSMessage("make_move", {
+        game_id: activeGameId,
+        from: indexToCoords(fromIndex),
+        to: indexToCoords(toIndex)
+    });
+}
+
 function sendWSMessage(type: string, payload: any) {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
         console.error("Nie można wysłać wiadomości. WebSocket nie jest połączony.");
@@ -654,30 +660,93 @@ async function handlePlayersOnline(payload: any) {
 }
 
 function handleGameStarted(payload: any) {
-    console.log("Gra wystartowała! Szczegóły:", payload);
-    // Zapisujemy ID gry z payloadu
-    activeGameId = payload.game_id || payload.id;
-    switchView('game');
+    console.log("Wykryto start nowej gry na serwerze:", payload);
+
+    // Ponownie dociągamy listę aktywnych gier z REST, żeby lobby się zaktualizowało
+    fetchActiveGames().then(gamesData => {
+        activeGames = gamesData;
+        renderLobbyLists(); // Odświeżamy widok lobby u wszystkich zainteresowanych
+    });
 }
 
 function handleGameState(payload: any) {
-    console.log("Nowy stan planszy z serwera:", payload);
-    // Tutaj wepniemy funkcję, która przerysuje naszą szachownicę na podstawie tablicy z Go
-}
+    console.log("Otrzymano stan gry z Go:", payload);
+    if (payload.game_id && payload.game_id !== activeGameId) return;
 
+    const fields = payload.board?.fields;
+    if (!fields || !Array.isArray(fields)) return;
+
+    const turnInfo = document.getElementById('game-turn-info');
+    if (turnInfo && payload.state) {
+        const whoMoves = payload.state.ColorToMove === 0 ? "Białe" : "Czarne";
+        const budget = payload.state.CurrentBudget;
+        turnInfo.innerHTML = `Ruch: <b>${whoMoves}</b> | Budżet 🎲: <b>${budget}</b>`;
+    }
+
+    const squares = document.querySelectorAll('.square');
+
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            const index = row * 8 + col;
+            const square = squares[index] as HTMLElement;
+            if (!square) continue;
+
+            square.innerHTML = ''; // Czyszczenie pola
+
+            const pieceData = fields[row][col];
+            if (!pieceData) continue;
+
+            const pieceElement = document.createElement('div');
+            pieceElement.className = 'piece';
+            pieceElement.innerText = getPieceIcon(pieceData.type, pieceData.color);
+
+            square.appendChild(pieceElement);
+            // Wywołujemy funkcję globalną - teraz ma pełny dostęp!
+            setupPieceDragAndDrop(pieceElement, index);
+
+        }
+    }
+}
+function getPieceIcon(type: number, color: number): string {
+    if (color === 0) { // BIAŁE
+        switch (type) {
+            case 0: return '♙'; // Pionek
+            case 1: return '♗'; // Goniec
+            case 2: return '♘'; // Skoczek
+            case 3: return '♖'; // Wieża
+            case 4: return '♔'; // Król
+            case 5: return '♕'; // Hetman
+            default: return '?';
+        }
+    } else { // CZARNE
+        switch (type) {
+            case 0: return '♟';
+            case 1: return '♝';
+            case 2: return '♞';
+            case 3: return '♜';
+            case 4: return '♚';
+            case 5: return '♛';
+            default: return '?';
+        }
+    }
+}
 function handleLegalMoves(payload: any) {
     console.log("Możliwe ruchy dla wybranej figury:", payload);
     // Tutaj podświetlimy kropkami kafelki, na które figura może skoczyć
 }
 
 async function fetchActiveGames(): Promise<any[]> {
-    if (!authToken) return [];
+    if (!authToken || !currentPlayer) return [];
+
+    // Wyciągamy ID aktualnego gracza (obsługujemy małe/wielkie litery na wszelki wypadek)
+    const currentUserId = currentPlayer.id;
+
     try {
-        const response = await fetch(`${API_URL}/games`, {
+        // Doklejamy parametry query dokładnie tak, jak wymaga tego Twój nowy endpoint w Go
+        const response = await fetch(`${API_URL}/games?ongoing=true&player_id=${currentUserId}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
-                // Jeśli serwer wymaga autoryzacji do pobrania listy gier:
                 'Authorization': authToken
             }
         });
@@ -685,12 +754,12 @@ async function fetchActiveGames(): Promise<any[]> {
         if (!response.ok) throw new Error(`Błąd pobierania gier: ${response.status}`);
 
         const data = await response.json();
-        console.log("AKTYWNE GRY Z REST:", data);
+        console.log("MOJE TRWAJĄCE GRY Z BACKENDU:", data);
 
-        // Zwracamy tablicę (dostosuj jeśli serwer opakowuje to w data.games)
+        // Zwracamy tablicę gier (dostosuj, jeśli Go opakowuje to w data.games)
         return data.games || data;
     } catch (error) {
-        console.error("Nie udało się pobrać listy gier:", error);
+        console.error("Nie udało się pobrać listy moich gier:", error);
         return [];
     }
 }

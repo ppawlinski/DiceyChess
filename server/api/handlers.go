@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/ppawlinski/DiceyChess/server/db"
@@ -177,7 +178,19 @@ func (h *Handler) GetGames(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	games, err := h.DB.GetOngoingGames()
+	onlyOngoing := r.URL.Query().Get("ongoing") == "true"
+
+	var filterPlayerID *int64
+	if playerIDStr := r.URL.Query().Get("player_id"); playerIDStr != "" {
+		id, err := strconv.ParseInt(playerIDStr, 10, 64)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid player_id"})
+			return
+		}
+		filterPlayerID = &id
+	}
+
+	games, err := h.DB.GetGames(filterPlayerID, onlyOngoing)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server error"})
 		return

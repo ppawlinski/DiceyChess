@@ -140,12 +140,24 @@ func (d *DB) GetGame(id int64) (*models.Game, error) {
 	return &g, nil
 }
 
-func (d *DB) GetOngoingGames() ([]models.Game, error) {
-	rows, err := d.conn.Query(`
+func (d *DB) GetGames(playerID *int64, onlyOngoing bool) ([]models.Game, error) {
+	query := `
 		SELECT id, white_id, black_id, status, result, pgn, state, created_at, finished_at
-		FROM games WHERE status = 'ongoing'
-		ORDER BY created_at DESC
-	`)
+		FROM games WHERE 1=1
+	`
+	args := []any{}
+
+	if onlyOngoing {
+		query += ` AND status = 'ongoing'`
+	}
+	if playerID != nil {
+		query += ` AND (white_id = ? OR black_id = ?)`
+		args = append(args, *playerID, *playerID)
+	}
+
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := d.conn.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

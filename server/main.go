@@ -39,7 +39,7 @@ func main() {
 }
 
 func loadOngoingGames(database *db.DB, gm *game.GameManager) error {
-	games, err := database.GetOngoingGames()
+	games, err := database.GetGames(nil, true)
 	if err != nil {
 		return err
 	}
