@@ -169,7 +169,48 @@ func (h *Hub) handleMessage(c *Client, msg Message) {
 		h.handleMakeMove(c, msg.Payload)
 	case "end_turn":
 		h.handleEndTurn(c, msg.Payload)
+	case "join_game":
+		h.handleJoinGame(c, msg.Payload)
+	case "roll_dice":
+		h.handleRollDice(c, msg.Payload)
 	}
+}
+
+func (h *Hub) handleRollDice(c *Client, payload json.RawMessage) {
+	var req struct {
+		GameID int64 `json:"game_id"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(c, "invalid payload")
+		return
+	}
+
+	g, ok := h.GameManager.Get(req.GameID)
+	if !ok {
+		h.sendError(c, "game not found")
+		return
+	}
+
+	if g.State.TurnStarted {
+		h.sendError(c, "turn already started")
+		return
+	}
+
+	currentPlayerID := g.WhiteID
+	if g.State.ColorToMove == game.Black {
+		currentPlayerID = g.BlackID
+	}
+	if c.PlayerID != currentPlayerID {
+		h.sendError(c, "not your turn")
+		return
+	}
+
+	g.StartTurn()
+
+	state, _ := g.Serialize()
+	h.DB.UpdateGameState(req.GameID, state)
+
+	h.broadcastGameState(req.GameID, g)
 }
 
 func (h *Hub) handleGetLegalMoves(c *Client, payload json.RawMessage) {
@@ -277,6 +318,27 @@ func (h *Hub) handleEndTurn(c *Client, payload json.RawMessage) {
 	state, err := g.Serialize()
 	if err == nil {
 		h.DB.UpdateGameState(req.GameID, state)
+	}
+
+	h.broadcastGameState(req.GameID, g)
+}
+
+func (h *Hub) handleJoinGame(c *Client, payload json.RawMessage) {
+	var req struct {
+		GameID int64 `json:"game_id"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(c, "invalid payload")
+		return
+	}
+
+	h.JoinGame(req.GameID, c.PlayerID)
+
+	// wyślij aktualny stan gry
+	g, ok := h.GameManager.Get(req.GameID)
+	if !ok {
+		h.sendError(c, "game not found")
+		return
 	}
 
 	h.broadcastGameState(req.GameID, g)

@@ -1,1 +1,3 @@
 *.exe
+.vscode/launch.json
+server/*.db

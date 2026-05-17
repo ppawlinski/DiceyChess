@@ -143,6 +143,8 @@ func (h *Handler) CreateGame(w http.ResponseWriter, r *http.Request) {
 	// stwórz grę z początkowym stanem
 	seed := time.Now().UnixNano()
 	newGame := game.NewGame(seed)
+	newGame.WhiteID = whiteID
+	newGame.BlackID = blackID
 	state, err := newGame.Serialize()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server error"})

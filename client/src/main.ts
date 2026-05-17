@@ -1,104 +1,365 @@
 const app = document.getElementById('app')!;
 
-// --- 1. MOCKUP WIDOKU LOGOWANIA ---
-const loginHTML = `
-    <div class="screen">
-        <h2>Szachy z Kostką 🎲</h2>
-        <input type="text" id="username" placeholder="Wpisz swój nick..." />
-        <button id="login-btn">Wejdź do gry</button>
-    </div>
-`;
+// --- GLOBALNY STAN KLIENTA ---
+let authToken: string | null = localStorage.getItem('chess_token');
+// Pobieramy zapisanego gracza z localStorage, jeśli istnieje
+const savedPlayer = localStorage.getItem('chess_player'); let currentPlayer: { id: number; name: string } | null = savedPlayer ? JSON.parse(savedPlayer) : null;
+const API_URL = 'http://192.168.1.101:8080/api';
+let socket: WebSocket | null = null;
+let activeGameId: number | null = null; // Zapamiętamy, w którą grę aktualnie gramy
+let activeGames: any[] = []; // Tablica na trwające gry gracza
+// // Ta zmienna przechowa nam graczy online z WebSocketa
+let allPlayers: any[] = []; // Pełna baza graczy z REST (id + name)
+let onlinePlayerIds: number[] = []; // Identyfikatory graczy online z WebSocketa
+
+// --- 1. WIDOK LOGOWANIA ---
 
 function initLogin() {
-    app.innerHTML = loginHTML;
-    document.getElementById('login-btn')?.addEventListener('click', () => {
-        const name = (document.getElementById('username') as HTMLInputElement).value;
-        if (name) {
-            alert(`Zalogowano jako: ${name} (Zapisano do makiety)`);
-            switchView('lobby'); // Przejdź do lobby po "zalogowaniu"
+    app.innerHTML = `
+        <div class="screen">
+            <h2>Szachy z Kostką 🎲</h2>
+            <input type="text" id="username" placeholder="Wpisz swój nick..." />
+            <button id="login-btn">Wejdź do gry</button>
+            <div id="login-error" style="color: #ff6b6b; margin-top: 10px; font-size: 14px;"></div>
+        </div>
+    `;
+
+    const loginBtn = document.getElementById('login-btn') as HTMLButtonElement;
+    const usernameInput = document.getElementById('username') as HTMLInputElement;
+    const errorDiv = document.getElementById('login-error')!;
+
+    loginBtn.addEventListener('click', async () => {
+        const name = usernameInput.value.trim();
+        if (!name) {
+            errorDiv.textContent = 'Nick nie może być pusty!';
+            return;
+        }
+
+        loginBtn.disabled = true;
+        loginBtn.textContent = 'Logowanie...';
+        errorDiv.textContent = '';
+
+        try {
+            // Strzał do Twojego backendu w Go
+            const response = await fetch(`${API_URL}/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ name: name }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Serwer odpowiedział kodem: ${response.status}`);
+            }
+
+            // Oczekujemy struktury np. { token: "...", player: { id: 1, name: "Patryk" } }
+            const data = await response.json();
+
+            // Zapisujemy dane sesji
+            authToken = data.token;
+            currentPlayer = data.player;
+            localStorage.setItem('chess_token', data.token);
+            localStorage.setItem('chess_player', JSON.stringify(data.player));
+            initWebSocket(); // <-- ODPALAMY WS TUTAJ
+            switchView('lobby');
+
+        } catch (error: any) {
+            console.error("Błąd logowania:", error);
+            errorDiv.textContent = 'Nie udało się połączyć z serwerem Go. Sprawdź czy działa i czy masz włączone CORS!';
+        } finally {
+            loginBtn.disabled = false;
+            loginBtn.textContent = 'Wejdź do gry';
         }
     });
 }
 
 // --- 2. MOCKUP WIDOKU LOBBY (ZAKTUALIZOWANY) ---
 
-// Lista sztucznych graczy dostępnych online do testów
-const mockUsers = ["Arek", "Kamil", "Monika", "Patryk_99", "Zosia"];
+// Interfejs odzwierciedlający strukturę gracza z Twojego serwera Go
+interface Player {
+    id: number;
+    name: string;
+}
 
-function initLobby() {
-    // Generujemy HTML dla listy graczy z tablicy
-    const usersListHTML = mockUsers
-        .map(user => `
-            <li class="player-item" data-username="${user}">
-                🟢 ${user} <button class="play-with-btn">Graj</button>
-            </li>
-        `).join('');
+async function fetchAllPlayers(): Promise<Player[]> {
+    try {
+        const response = await fetch(`${API_URL}/players`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                // Jeśli Twój endpoint wymaga tokenu, odkomentuj linijkę poniżej:
+                // 'Authorization': `Bearer ${authToken}`
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Błąd pobierania graczy: ${response.status}`);
+        }
+        const data = await response.json();
+        return data.players;
+    } catch (error) {
+        console.error("Nie udało się pobrać listy graczy z REST:", error);
+        // W razie błędu zwracamy pustą tablicę, żeby aplikacja się nie wywaliła
+        return [];
+    }
+}
+
+async function createGame(opponentId: number): Promise<void> {
+    if (!authToken) {
+        alert("Brak tokenu autoryzacyjnego! Zaloguj się ponownie.");
+        switchView('login');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/games/create`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                // Przekazujemy token autoryzacyjny zgodnie ze specyfikacją Twojego API
+                'Authorization': authToken
+            },
+            body: JSON.stringify({
+                opponent_id: opponentId
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Nie udało się utworzyć gry: ${response.status}`);
+        }
+
+        const gameData = (await response.json()).game;
+        console.log("Gra utworzona pomyślnie!", gameData);
+
+        // Wyciągamy game_id z odpowiedzi serwera (dostosuj wielkość liter ID/Id/game_id jeśli trzeba)
+        const gameId = gameData.game_id || gameData.id || gameData.ID;
+
+        alert(`Gra o ID ${gameId} została utworzona! Przełączam na widok szachownicy.`);
+
+        // Przełączamy użytkownika do ekranu gry
+        switchView('game');
+
+        // TODO: W tym miejscu w przyszłości zainicjujemy połączenie WebSocket dla konkretnej gry
+        // initGameWebSocket(gameId);
+
+    } catch (error) {
+        console.error("Błąd podczas tworzenia gry:", error);
+        alert("Wystąpił błąd serwera przy tworzeniu gry. Sprawdź konsolę backendu.");
+    }
+}
+
+function initWebSocket() {
+    if (!authToken) return;
+
+    // Jeśli połączenie już istnieje i jest otwarte, nie otwieramy nowego
+    if (socket && socket.readyState === WebSocket.OPEN) return;
+
+    // Łączymy się zgodnie ze specyfikacją Twojego API
+    socket = new WebSocket(`ws://192.168.1.101:8080/ws?token=${authToken}`);
+
+    socket.onopen = () => {
+        console.log("🚀 Połączenie WebSocket zostało otwarte pomyślnie!");
+    };
+
+    socket.onmessage = (event) => {
+        try {
+            const message = JSON.parse(event.data);
+            console.log("📥 Wiadomość z serwera (WS):", message);
+
+            // Obsługa poszczególnych typów wiadomości z Twojego API
+            switch (message.type) {
+                case 'players_online':
+                    handlePlayersOnline(message.payload);
+                    break;
+                case 'game_started':
+                    handleGameStarted(message.payload);
+                    break;
+                case 'game_state':
+                    handleGameState(message.payload);
+                    break;
+                case 'legal_moves':
+                    handleLegalMoves(message.payload);
+                    break;
+                case 'error':
+                    alert(`Błąd serwera (WS): ${message.payload.error}`);
+                    break;
+                default:
+                    console.warn("Nienany typ wiadomości:", message.type);
+            }
+        } catch (err) {
+            console.error("Błąd parsowania wiadomości WebSocket:", err);
+        }
+    };
+
+    socket.onclose = () => {
+        console.log("🔌 Połączenie WebSocket zostało zamknięte.");
+        // Opcjonalnie: auto-reconnect po kilku sekundach
+    };
+
+    socket.onerror = (error) => {
+        console.error("💥 Błąd WebSocket:", error);
+    };
+}
+
+async function initLobby() {
+    // Pobieramy dane z obu endpointów REST jednocześnie
+    const [playersData, gamesData] = await Promise.all([
+        fetchAllPlayers(),
+        fetchActiveGames()
+    ]);
+
+    // Go pakuje dane w obiekty .players i .games, upewniamy się że wyciągamy tablice
+    allPlayers = playersData;
+    activeGames = gamesData;
 
     app.innerHTML = `
         <div class="screen">
-            <h3>Witaj w Lobby!</h3>
+            <h3>Witaj w Lobby, <span id="lobby-username" style="color: #4caf50;">Gracz</span>!</h3>
             
-            <!-- Sekcja 1: Wpisanie nicku ręcznie -->
             <div class="lobby-section">
-                <label for="search-player">Wpisz nick gracza:</label>
-                <div style="display: flex; gap: 10px; margin-top: 5px;">
-                    <input type="text" id="search-player" placeholder="Np. Janek..." style="flex: 1;" />
-                    <button id="start-game-manual-btn">Zagraj</button>
-                </div>
+                <h4>Gracze Online:</h4>
+                <ul id="online-players-list" class="player-container"></ul>
             </div>
 
-            <hr style="width: 100%; border: 0; border-top: 1px solid #555; margin: 15px 0;" />
-
-            <!-- Sekcja 2: Wybór z listy graczy online -->
-            <div class="lobby-section">
-                <h4>Gracze online (${mockUsers.length}):</h4>
-                <ul id="online-players-list">
-                    ${usersListHTML}
-                </ul>
+            <div class="lobby-section" style="margin-top: 15px;">
+                <h4>Gracze Offline:</h4>
+                <ul id="offline-players-list" class="player-container" style="opacity: 0.6;"></ul>
             </div>
 
-            <hr style="width: 100%; border: 0; border-top: 1px solid #555; margin: 15px 0;" />
+            <hr style="width: 100%; border: 0; border-top: 1px solid #555; margin: 20px 0;" />
 
-            <!-- Sekcja 3: Twoje aktywne gry -->
             <div class="lobby-section">
-                <h4>Twoje aktywne gry:</h4>
-                <ul>
-                    <li>Michał vs Ty <button onclick="window.switchView('game')">Graj (Twój ruch)</button></li>
-                </ul>
+                <h4>Twoje trwające gry:</h4>
+                <ul id="active-games-list"></ul>
             </div>
         </div>
     `;
 
-    // --- LOGIKA OBSŁUGI ZDARZEŃ ---
+    if (currentPlayer) {
+        document.getElementById('lobby-username')!.textContent = currentPlayer.name;
+    }
 
-    // 1. Obsługa wpisania ręcznego
-    const manualBtn = document.getElementById('start-game-manual-btn')!;
-    const searchInput = document.getElementById('search-player') as HTMLInputElement;
+    // Wywołujemy renderowanie struktur
+    renderLobbyLists();
+}
 
-    manualBtn.addEventListener('click', () => {
-        const opponentName = searchInput.value.trim();
-        if (opponentName) {
-            alert(`Rozpoczynasz grę z graczem: ${opponentName} (Wpisany ręcznie)`);
-            switchView('game');
-        } else {
-            alert('Wpisz najpierw nick gracza!');
+// Funkcja pomocnicza: szuka nicku w pobranej bazie allPlayers na podstawie ID
+function getPlayerNameById(id: number): string {
+    const player = allPlayers.find(p => p.id === id || p.ID === id);
+    return player ? (player.name || player.Name) : `Gracz #${id}`;
+}
+
+function renderLobbyLists() {
+    const onlineList = document.getElementById('online-players-list');
+    const offlineList = document.getElementById('offline-players-list');
+    const gamesList = document.getElementById('active-games-list');
+
+    if (!onlineList || !offlineList || !gamesList) return;
+
+    // Filtrujemy aktualnego gracza – nie chcemy go na żadnej liście do wyzwania
+    const otherPlayers = allPlayers.filter(p => {
+        const pId = p.id !== undefined ? p.id : p.ID;
+        return currentPlayer ? pId !== currentPlayer.id : true;
+    });
+
+    // Podział na online i offline na podstawie ID zebranych z WebSocketa
+    const onlineUsers = otherPlayers.filter(p => {
+        const pId = p.id !== undefined ? p.id : p.ID;
+        return onlinePlayerIds.includes(pId);
+    });
+
+    const offlineUsers = otherPlayers.filter(p => {
+        const pId = p.id !== undefined ? p.id : p.ID;
+        return !onlinePlayerIds.includes(pId);
+    });
+
+    // 1. Renderowanie listy ONLINE
+    if (onlineUsers.length === 0) {
+        onlineList.innerHTML = `<li style="color: #aaa; font-style: italic; font-size: 14px;">Brak innych graczy online...</li>`;
+    } else {
+        onlineList.innerHTML = onlineUsers.map(p => `
+            <li class="player-item" data-id="${p.id || p.ID}" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                <span>🟢 <b>${p.name || p.Name}</b></span>
+                <button class="play-with-btn">Wyzwij</button>
+            </li>
+        `).join('');
+    }
+
+    // 2. Renderowanie listy OFFLINE (brak przycisku gry, bo są niedostępni)
+    if (offlineUsers.length === 0) {
+        offlineList.innerHTML = `<li style="color: #aaa; font-style: italic; font-size: 14px;">Wszyscy są online!</li>`;
+    } else {
+        offlineList.innerHTML = offlineUsers.map(p => `
+            <li style="margin-bottom: 5px; color: #bbb;">
+                <span>🔴 ${p.name || p.Name}</span>
+            </li>
+        `).join('');
+    }
+
+    // 3. Renderowanie trwających gier z zamianą ID na Nicknamy
+    if (activeGames.length === 0) {
+        gamesList.innerHTML = `<li style="color: #aaa; font-style: italic; font-size: 14px;">Nie uczestniczysz w żadnej grze.</li>`;
+    } else {
+        gamesList.innerHTML = activeGames.map(g => {
+            const gameId = g.game_id || g.id || g.ID;
+
+            // Wyciągamy ID białego i czarnego gracza z struktury Go
+            const whiteId = g.white_id || g.WhiteID || g.white_player_id;
+            const blackId = g.black_id || g.BlackID || g.black_player_id;
+
+            // Mapujemy ID na czytelne nicki
+            const whiteName = getPlayerNameById(whiteId);
+            const blackName = getPlayerNameById(blackId);
+
+            return `
+                <li style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; background: #2a2a2a; padding: 6px 10px; border-radius: 4px;">
+                    <span>🏆 Mecz #${gameId}: <b style="color: #fff;">${whiteName}</b> vs <b>${blackName}</b></span>
+                    <button class="join-game-btn" data-game-id="${gameId}">Dołącz</button>
+                </li>
+            `;
+        }).join('');
+    }
+
+    setupLobbyListEvents();
+}
+
+// Zmiana w podpinaniu eventu listy (uproszczenie, bo nasłuchujemy na online-players-list)
+function setupLobbyListEvents() {
+    document.getElementById('online-players-list')?.addEventListener('click', async (e) => {
+        const target = e.target as HTMLElement;
+        if (target.classList.contains('play-with-btn')) {
+            const item = target.closest('.player-item') as HTMLElement;
+            const oppId = parseInt(item?.dataset.id || '');
+            if (oppId) await createGame(oppId);
         }
     });
 
-    // 2. Obsługa kliknięcia w gracza z listy (Delegacja zdarzeń)
-    const playersList = document.getElementById('online-players-list')!;
-    playersList.addEventListener('click', (event) => {
-        const target = event.target as HTMLElement;
-
-        // Sprawdzamy czy kliknięto przycisk "Graj" lub sam element listy
-        const listItem = target.closest('.player-item') as HTMLElement;
-
-        if (listItem) {
-            const opponentName = listItem.dataset.username;
-            alert(`Rozpoczynasz grę z graczem: ${opponentName} (Wybrany z listy)`);
-            switchView('game');
+    document.getElementById('active-games-list')?.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement;
+        if (target.classList.contains('join-game-btn')) {
+            const gameId = parseInt(target.dataset.gameId || '');
+            if (gameId) joinGame(gameId);
         }
     });
+}
+
+function joinGame(gameId: number) {
+    console.log(`Próba dołączenia do gry o ID: ${gameId}`);
+    activeGameId = gameId;
+
+    // 1. Przełączamy ekran na szachownicę (Vite wyrenderuje pustą planszę)
+    switchView('game');
+
+    // 2. Informujemy serwer, że chcemy stan tej gry.
+
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        console.log(`Wysyłam prośbę o synchronizację gry #${gameId}...`);
+
+        sendWSMessage("join_game", {
+            game_id: gameId
+        });
+    }
 }
 
 // --- 3. MOCKUP WIDOKU GRY ---
@@ -279,27 +540,31 @@ function initGame() {
         });
     }
 
+    // Pomocnicza funkcja, która zamienia indeks tablicy (0-63) na strukturę {"Row": x, "Col": y} dla Go
+    function indexToCoords(index: number) {
+        return {
+            Row: Math.floor(index / 8),
+            Col: index % 8
+        };
+    }
     // 4. Wspólna funkcja wykonująca fizyczne przeniesienie figury w DOM
     function executeMove(fromIndex: number, toIndex: number) {
+
+        if (!activeGameId) {
+            console.error("Brak aktywnego ID gry!");
+            return;
+        }
         const fromSquare = board.querySelector(`[data-index="${fromIndex}"]`) as HTMLElement;
         const toSquare = board.querySelector(`[data-index="${toIndex}"]`) as HTMLElement;
         const movingPiece = fromSquare.querySelector('.piece');
 
-        if (movingPiece) {
-            // Jeśli na docelowym polu stoi figura, bijemy ją (usuwamy z makiety)
-            const targetPiece = toSquare.querySelector('.piece');
-            if (targetPiece) {
-                toSquare.removeChild(targetPiece);
-            }
-
-            // Przenosimy element figury do nowego kafelka
-            toSquare.appendChild(movingPiece);
-
-            // Aktualizujemy indeks startowy w funkcji drag&drop dla tej figury
-            // Wyłączamy całkowicie natywny mechanizm przeciągania HTML5 dla tej figury
-            movingPiece.addEventListener('dragstart', (e) => e.preventDefault());
-            setupPieceDragAndDrop(movingPiece as HTMLElement, toIndex);
-        }
+        // Wysyłamy ruch do serwera w formacie:
+        // {"type": "make_move", "payload": {"game_id": 1, "from": {"Row": 6, "Col": 0}, "to": {"Row": 5, "Col": 0}}}
+        sendWSMessage("make_move", {
+            game_id: activeGameId,
+            from: indexToCoords(fromIndex),
+            to: indexToCoords(toIndex)
+        });
     }
 
     // --- LOGIKA REPRODUKCJI KROPEK NA KOSTCE (BEZ ZMIAN) ---
@@ -346,15 +611,105 @@ function initGame() {
     });
 }
 
+function sendWSMessage(type: string, payload: any) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        console.error("Nie można wysłać wiadomości. WebSocket nie jest połączony.");
+        return;
+    }
+    const message = JSON.stringify({ type, payload });
+    socket.send(message);
+    console.log("📤 Wysłano przez WS:", message);
+}
+
+async function handlePlayersOnline(payload: any) {
+    console.log("Aktualizacja statusów online z WS:", payload);
+
+    const rawList = payload.players || payload;
+
+    if (Array.isArray(rawList)) {
+        onlinePlayerIds = rawList.map(item => {
+            if (typeof item === 'object' && item !== null) {
+                return item.id || item.ID;
+            }
+            return item;
+        });
+    }
+
+    // --- KLUCZOWA POPRAWKA ---
+    // Sprawdzamy, czy wśród zalogowanych ID jest ktoś, kogo NIE mamy w lokalnej bazie allPlayers
+    const hasUnknownPlayer = onlinePlayerIds.some(id => {
+        return !allPlayers.some(p => p.id === id || p.ID === id);
+    });
+
+    // Jeśli pojawił się nowy gracz, szybko dociągamy aktualną listę z bazy przez REST
+    if (hasUnknownPlayer) {
+        console.log("Wykryto nowego gracza na serwerze! Aktualizuję bazę nicków przez REST...");
+        const playersData = await fetchAllPlayers();
+        allPlayers = playersData;
+    }
+    // -------------------------
+
+    // Teraz renderowanie ma już komplet danych i nowy nick pojawi się natychmiast!
+    renderLobbyLists();
+}
+
+function handleGameStarted(payload: any) {
+    console.log("Gra wystartowała! Szczegóły:", payload);
+    // Zapisujemy ID gry z payloadu
+    activeGameId = payload.game_id || payload.id;
+    switchView('game');
+}
+
+function handleGameState(payload: any) {
+    console.log("Nowy stan planszy z serwera:", payload);
+    // Tutaj wepniemy funkcję, która przerysuje naszą szachownicę na podstawie tablicy z Go
+}
+
+function handleLegalMoves(payload: any) {
+    console.log("Możliwe ruchy dla wybranej figury:", payload);
+    // Tutaj podświetlimy kropkami kafelki, na które figura może skoczyć
+}
+
+async function fetchActiveGames(): Promise<any[]> {
+    if (!authToken) return [];
+    try {
+        const response = await fetch(`${API_URL}/games`, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+                // Jeśli serwer wymaga autoryzacji do pobrania listy gier:
+                'Authorization': authToken
+            }
+        });
+
+        if (!response.ok) throw new Error(`Błąd pobierania gier: ${response.status}`);
+
+        const data = await response.json();
+        console.log("AKTYWNE GRY Z REST:", data);
+
+        // Zwracamy tablicę (dostosuj jeśli serwer opakowuje to w data.games)
+        return data.games || data;
+    } catch (error) {
+        console.error("Nie udało się pobrać listy gier:", error);
+        return [];
+    }
+}
+
 // --- SYSTEM PRZEŁĄCZANIA WIDOKÓW (ROUTER) ---
 export function switchView(viewName: 'login' | 'lobby' | 'game') {
     if (viewName === 'login') initLogin();
-    if (viewName === 'lobby') initLobby();
+    if (viewName === 'lobby') initLobby(); // Wywołanie async zainicjuje pobieranie
     if (viewName === 'game') initGame();
 }
 
 // Rejestrujemy funkcję globalnie, żeby działała w atrybutach onclick w HTML
 (window as any).switchView = switchView;
 
-// Uruchomienie na starcie widoku logowania
-switchView('login');
+// Na starcie sprawdzamy, czy gracz ma już token sesji
+if (authToken) {
+    console.log("Znaleziono istniejący token, przekierowuję do lobby...");
+    initWebSocket(); // <-- ODPALAMY WS TUTAJ
+    switchView('lobby');
+} else {
+    switchView('login');
+}

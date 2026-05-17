@@ -1,10 +1,12 @@
 package game
 
 type Game struct {
-	Board *Board
-	State *GameState
-	Dice  *Dice
-	turn  *Turn
+	Board   *Board
+	State   *GameState
+	Dice    *Dice
+	turn    *Turn
+	WhiteID int64
+	BlackID int64
 }
 
 func NewGame(seed int64) *Game {
