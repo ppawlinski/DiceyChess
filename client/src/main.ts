@@ -11,7 +11,12 @@ let activeGames: any[] = []; // Tablica na trwające gry gracza
 // // Ta zmienna przechowa nam graczy online z WebSocketa
 let allPlayers: any[] = []; // Pełna baza graczy z REST (id + name)
 let onlinePlayerIds: number[] = []; // Identyfikatory graczy online z WebSocketa
-
+let diceAnimationInterval: number | null = null;
+let currentLegalMoves: number[] = [];
+let selectedSquareIndex: number | null = null;
+let isMyTurn: boolean = false;
+let currentBudget: number = 0;
+let resolveDiceResponse: ((value: any) => void) | null = null;
 // --- 1. WIDOK LOGOWANIA ---
 
 function initLogin() {
@@ -134,9 +139,6 @@ async function createGame(opponentId: number): Promise<void> {
 
         // Wyciągamy game_id z odpowiedzi serwera (dostosuj wielkość liter ID/Id/game_id jeśli trzeba)
         const gameId = gameData.game_id || gameData.id || gameData.ID;
-
-        alert(`Gra o ID ${gameId} została utworzona! Przełączam na widok szachownicy.`);
-
         joinGame(gameId);
 
         // TODO: W tym miejscu w przyszłości zainicjujemy połączenie WebSocket dla konkretnej gry
@@ -178,10 +180,11 @@ function initWebSocket() {
                     handleGameState(message.payload);
                     break;
                 case 'legal_moves':
+                    currentLegalMoves = (message.payload.moves || []).map((m: any) => coordsToIndex(m));
                     handleLegalMoves(message.payload);
                     break;
                 case 'error':
-                    alert(`Błąd serwera (WS): ${message.payload.error}`);
+                    console.log(`Błąd serwera (WS): ${message.payload.error}`);
                     break;
                 default:
                     console.warn("Nienany typ wiadomości:", message.type);
@@ -291,6 +294,7 @@ function renderLobbyLists() {
         offlineList.innerHTML = offlineUsers.map(p => `
             <li style="margin-bottom: 5px; color: #bbb;">
                 <span>🔴 ${p.name || p.Name}</span>
+                <button class="play-with-btn" onclick="handleChallengeClick(${p.id || p.ID})">Wyzwij</button>
             </li>
         `).join('');
     }
@@ -341,7 +345,6 @@ async function handleChallengeClick(opponentId: number) {
     if (existingGame) {
         const gameId = existingGame.game_id || existingGame.id || existingGame.ID;
         console.log(`Gra z tym użytkownikiem już trwa (Mecz #${gameId}). Automatycznie dołączam...`);
-        alert(`Masz już aktywną grę z tym graczem! Przekierowuję do meczu #${gameId}.`);
         joinGame(gameId);
         return; // Przerywamy działanie, nie wysyłamy POST-a!
     }
@@ -390,19 +393,24 @@ function initGame() {
     app.innerHTML = `
         <div class="game-container">
             <div class="dice-section">
-                <span>Ruch gracza: <b>Ty</b></span>
-                <button id="roll-btn">🎲 Rzuć kostką</button>
+                <span id="game-turn-info">Ładowanie...</span>
                 <div class="dice" id="dice-element"></div>
             </div>
-            <div class="chessboard" id="board"></div>
-            <div><button onclick="window.switchView('lobby')">🏳️ Poddaj się</button></div>
+            <div class="player-banner" id="top-player-banner"></div>
+            <div class="board-wrapper">
+                <div class="chessboard" id="board"></div>
+                <button id="roll-dice-btn" class="center-dice-btn">RZUĆ KOSTKĄ 🎲</button>
+            </div>
+            <div class="player-banner" id="bottom-player-banner"></div>
+            <div><button id="end-turn-btn">Zakończ turę</button></div>
+            <div><button onclick="window.switchView('lobby')">Wyjdź do lobby</button></div>
         </div>
     `;
 
     const board = document.getElementById('board')!;
+    document.getElementById('end-turn-btn')?.addEventListener('click', handleEndTurn);
 
     // Stan gry na potrzeby makiety (wybrana pozycja startowa)
-    let selectedSquareIndex: number | null = null;
 
     // 1. Generowanie planszy 8x8
     for (let i = 0; i < 64; i++) {
@@ -417,81 +425,124 @@ function initGame() {
         // Mechanizm obsługi kliknięć (alternatywa dla Drag&Drop, idealna na Mobile)
         square.addEventListener('click', (e) => {
             // Jeśli kliknięto w figurę, ignorujemy ten handler, bo obsłuży go Drag&Drop
-            if ((e.target as HTMLElement).classList.contains('piece') && selectedSquareIndex === null) return;
-
+            const hasPiece = square.querySelector('.piece') !== null;
+            if (hasPiece && selectedSquareIndex === null) {
+                return;
+            }
             handleSquareClick(i);
         });
 
         board.appendChild(square);
     }
 
-    // 2. Obsługa logiki klikania (Wybór -> Ruch)
-    function handleSquareClick(clickedIndex: number) {
-        const clickedSquare = board.querySelector(`[data-index="${clickedIndex}"]`) as HTMLElement;
-        const currentSelected = board.querySelector('.selected') as HTMLElement;
 
-        if (selectedSquareIndex === null) {
-            // KROK 1: Wybór figury poprzez kliknięcie
-            if (clickedSquare.textContent.trim() !== "") {
-                selectedSquareIndex = clickedIndex;
-                clickedSquare.classList.add('selected');
-            }
-        } else {
-            // KROK 2: Wybór pola docelowego
-            if (selectedSquareIndex === clickedIndex) {
-                // Kliknięcie w to samo pole - odznaczamy
-                clickedSquare.classList.remove('selected');
-                selectedSquareIndex = null;
-            } else {
-                // Wykonanie ruchu w makiecie
-                executeMove(selectedSquareIndex, clickedIndex);
-                if (currentSelected) currentSelected.classList.remove('selected');
-                selectedSquareIndex = null;
-            }
-        }
-    }
 
     // --- LOGIKA REPRODUKCJI KROPEK NA KOSTCE (BEZ ZMIAN) ---
-    const diceElement = document.getElementById('dice-element')!;
-    const rollBtn = document.getElementById('roll-btn') as HTMLButtonElement;
+    const rollBtn = document.getElementById('roll-dice-btn') as HTMLButtonElement;
 
-    const dotPositions: { [key: number]: number[] } = {
-        1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8]
-    };
-
-    function renderDiceDots(value: number) {
-        diceElement.innerHTML = '';
-        for (let i = 0; i < 9; i++) {
-            const cell = document.createElement('div');
-            if (dotPositions[value].includes(i)) {
-                const dot = document.createElement('div');
-                dot.classList.add('dot');
-                cell.appendChild(dot);
-            }
-            diceElement.appendChild(cell);
-        }
-    }
 
     renderDiceDots(1);
 
     rollBtn.addEventListener('click', () => {
+        const diceElement = document.getElementById('dice-element')!;
+        // 1. Blokujemy przycisk, żeby uniknąć spamu
         rollBtn.disabled = true;
-        diceElement.classList.add('shaking');
-        let counter = 0;
 
-        const interval = setInterval(() => {
-            renderDiceDots(Math.floor(Math.random() * 6) + 1);
-            counter++;
-            if (counter > 12) {
-                clearInterval(interval);
-                diceElement.classList.remove('shaking');
-                const finalValue = Math.floor(Math.random() * 6) + 1;
-                renderDiceDots(finalValue);
-                rollBtn.disabled = false;
-                const figureNames = ["Pionek", "Skoczek", "Goniec", "Wieża", "Hetman", "Król"];
-                alert(`Wylosowano: ${finalValue} oczek. W tym ruchu możesz ruszyć się tylko: ${figureNames[finalValue - 1]}iem!`);
-            }
+        // 2. Odpalamy efekt wizualny trzęsienia
+        diceElement.classList.add('shaking');
+
+        // 3. Uruchamiamy losowe miganie oczek w locie
+        if (diceAnimationInterval) clearInterval(diceAnimationInterval);
+
+        diceAnimationInterval = window.setInterval(() => {
+            const randomFakeValue = Math.floor(Math.random() * 6) + 1;
+            renderDiceDots(randomFakeValue);
         }, 70);
+
+        // 4. Strzelamy do serwera – to stamtąd przyjdzie prawdziwy wynik
+        handleRollDice();
+    });
+}
+
+// 2. Obsługa logiki klikania (Wybór -> Ruch)
+function handleSquareClick(clickedIndex: number) {
+    console.log("handleSquareClick");
+    const board = document.getElementById('board')!;
+    const clickedSquare = board.querySelector(`[data-index="${clickedIndex}"]`) as HTMLElement;
+    const currentSelected = board.querySelector('.selected') as HTMLElement;
+
+    if (selectedSquareIndex === null) {
+        // KROK 1: Wybór figury poprzez kliknięcie
+        console.log("handleSquareClick2");
+        if (clickedSquare.textContent.trim() !== "") {
+            selectedSquareIndex = clickedIndex;
+            clickedSquare.classList.add('selected');
+        }
+    } else {
+        // KROK 2: Wybór pola docelowego
+        if (selectedSquareIndex != clickedIndex) {
+            console.log("handleSquareClick4");
+            // Wykonanie ruchu w makiecie
+            executeMove(selectedSquareIndex, clickedIndex);
+            if (currentSelected) currentSelected.classList.remove('selected');
+            clearLegalMoves();
+            selectedSquareIndex = null;
+        }
+    }
+}
+
+function renderDiceDots(value: number) {
+    const diceElement = document.getElementById('dice-element')!;
+    const dotPositions: { [key: number]: number[] } = {
+        1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8]
+    };
+    diceElement.innerHTML = '';
+    for (let i = 0; i < 9; i++) {
+        const cell = document.createElement('div');
+        if (dotPositions[value].includes(i)) {
+            const dot = document.createElement('div');
+            dot.classList.add('dot');
+            cell.appendChild(dot);
+        }
+        diceElement.appendChild(cell);
+    }
+}
+
+function handleEndTurn() {
+    if (!activeGameId || !socket || socket.readyState !== WebSocket.OPEN) return;
+
+    console.log(`Wysyłam żądanie zakończenia tury dla gry #${activeGameId}`);
+
+    sendWSMessage("end_turn", {
+        game_id: activeGameId
+    });
+}
+function handleRollDice() {
+    const rollBtn = document.getElementById('roll-dice-btn');
+    if (rollBtn) rollBtn.style.display = 'none';
+    if (!activeGameId || !socket || socket.readyState !== WebSocket.OPEN) return;
+
+    const networkPromise = new Promise((resolve) => {
+        resolveDiceResponse = resolve; // Zapisujemy "wyzwalacz" do zmiennej globalnej
+    });
+    const timerPromise = new Promise((resolve) => setTimeout(resolve, 1000));
+
+    sendWSMessage("roll_dice", {
+        game_id: activeGameId
+    });
+
+    Promise.all([networkPromise, timerPromise]).then(([serverResponse]) => {
+        // 🔥 TEN BLOK URUCHOMI SIĘ DOPIERO PO MINIMUM 1 SEKUNDZIE
+        // (i dopiero gdy serwer odeśle dane)
+
+        stopDiceAnimation(); // Zatrzymujemy animację
+
+        // Pokazujemy ostateczny wynik na kostce
+        renderDiceResult(serverResponse.CurrentDice);
+
+        // Na samym końcu bezpiecznie aktualizujemy budżet i resztę stanu
+        updateBudget(serverResponse.CurrentBudget);
+        updateGameState(serverResponse);
     });
 }
 
@@ -504,38 +555,36 @@ function setupPieceDragAndDrop(piece: HTMLElement, startIndex: number) {
 
     parentSquare.addEventListener('pointerdown', (e) => {
         // Interweniujemy tylko, jeśli na kafelku jest nasza figura
+        document.querySelectorAll('.square').forEach(s => s.classList.remove('selected'));
         if (!parentSquare.contains(piece)) return;
-
+        parentSquare.classList.add('selected');
+        clearLegalMoves();
         const initialIndex = parseInt(parentSquare.dataset.index!);
+        selectedSquareIndex = initialIndex;
         const startX = e.clientX;
         const startY = e.clientY;
-
+        console.log(initialIndex);
+        console.log(indexToCoords(initialIndex));
         let isDragging = false;
         const rect = piece.getBoundingClientRect();
 
-        const moveAt = (clientX: number, clientY: number) => {
-            piece.style.left = clientX - rect.width / 2 + 'px';
-            piece.style.top = clientY - rect.height / 2 + 'px';
-        };
-
         function onPointerMove(ev: PointerEvent) {
-            const deltaX = ev.clientX - startX;
-            const deltaY = ev.clientY - startY;
-            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            if (!piece || !rect) return;
 
-            // Jeśli ruch jest mniejszy niż 7 pikseli, pozwalamy działać zwykłemu kliknięciu na kafelku
-            if (!isDragging && distance < 7) {
-                return;
-            }
+            const boardElement = document.getElementById('board');
+            const isFlipped = boardElement?.classList.contains('flipped');
+
+            const rawDeltaX = ev.clientX - startX;
+            const rawDeltaY = ev.clientY - startY;
+            const distance = Math.sqrt(rawDeltaX * rawDeltaX + rawDeltaY * rawDeltaY);
+
+            if (!isDragging && distance < 7) return;
 
             if (!isDragging) {
+                getLegalMoves(startIndex);
                 isDragging = true;
-                e.stopPropagation(); // Blokujemy aktywację kliknięcia, bo zaczynamy drag
+                ev.preventDefault();
 
-                document.querySelectorAll('.square').forEach(s => s.classList.remove('selected'));
-                parentSquare.classList.add('selected');
-
-                // Aktywujemy fizyczność figury na czas przeciągania
                 piece.classList.add('dragging');
                 piece.style.width = rect.width + 'px';
                 piece.style.height = rect.height + 'px';
@@ -543,7 +592,17 @@ function setupPieceDragAndDrop(piece: HTMLElement, startIndex: number) {
                 piece.style.zIndex = '1000';
             }
 
-            moveAt(ev.clientX, ev.clientY);
+            if (isFlipped && boardElement) {
+                const boardRect = boardElement.getBoundingClientRect();
+                const flippedX = boardRect.right - ev.clientX;
+                const flippedY = boardRect.bottom - ev.clientY;
+                piece.style.left = (flippedX - rect.width / 2) + 'px';
+                piece.style.top = (flippedY - rect.height / 2) + 'px';
+            } else {
+                // Standardowy widok dla białego (bez obrotu)
+                piece.style.left = (ev.clientX - rect.width / 2) + 'px';
+                piece.style.top = (ev.clientY - rect.height / 2) + 'px';
+            }
         }
 
         document.addEventListener('pointermove', onPointerMove);
@@ -553,6 +612,7 @@ function setupPieceDragAndDrop(piece: HTMLElement, startIndex: number) {
             document.removeEventListener('pointerup', onPointerUp);
 
             if (!isDragging) {
+                getLegalMoves(startIndex);
                 // Jeśli nie przesunięto o 7px, nie robimy nic. 
                 // Przeglądarka sama naturalnie odpali standardowy 'click' na kafelku!
                 return;
@@ -576,6 +636,7 @@ function setupPieceDragAndDrop(piece: HTMLElement, startIndex: number) {
             piece.style.width = '';
             piece.style.height = '';
             parentSquare.classList.remove('selected');
+            clearLegalMoves();
 
             if (targetSquare) {
                 const targetIndex = parseInt(targetSquare.dataset.index!);
@@ -583,6 +644,7 @@ function setupPieceDragAndDrop(piece: HTMLElement, startIndex: number) {
                     executeMove(initialIndex, targetIndex);
                 }
             }
+            clearLegalMoves();
         };
 
         document.addEventListener('pointerup', onPointerUp);
@@ -596,25 +658,37 @@ function indexToCoords(index: number) {
         Col: index % 8
     };
 }
+
+// Pomocnicza funkcja, która zamienia indeks tablicy (0-63) na strukturę {"Row": x, "Col": y} dla Go
+function coordsToIndex(coords: any) {
+    return coords.Row * 8 + coords.Col;
+}
+
+function getLegalMoves(startIndex: number) {
+    if (isMyTurn && currentBudget > 0) {
+        sendWSMessage("get_legal_moves", {
+            game_id: activeGameId,
+            from: indexToCoords(startIndex)
+        });
+    }
+}
+
 // 4. Wspólna funkcja wykonująca fizyczne przeniesienie figury w DOM
 function executeMove(fromIndex: number, toIndex: number) {
-    const board = document.getElementById('board')!;
-
     if (!activeGameId) {
         console.error("Brak aktywnego ID gry!");
         return;
     }
-    const fromSquare = board.querySelector(`[data-index="${fromIndex}"]`) as HTMLElement;
-    const toSquare = board.querySelector(`[data-index="${toIndex}"]`) as HTMLElement;
-    const movingPiece = fromSquare.querySelector('.piece');
 
-    // Wysyłamy ruch do serwera w formacie:
-    // {"type": "make_move", "payload": {"game_id": 1, "from": {"Row": 6, "Col": 0}, "to": {"Row": 5, "Col": 0}}}
-    sendWSMessage("make_move", {
-        game_id: activeGameId,
-        from: indexToCoords(fromIndex),
-        to: indexToCoords(toIndex)
-    });
+    const isMoveLegal = currentLegalMoves.includes(toIndex);
+    if (isMyTurn && isMoveLegal && currentBudget > 0) {
+
+        sendWSMessage("make_move", {
+            game_id: activeGameId,
+            from: indexToCoords(fromIndex),
+            to: indexToCoords(toIndex)
+        });
+    }
 }
 
 function sendWSMessage(type: string, payload: any) {
@@ -676,13 +750,79 @@ function handleGameState(payload: any) {
     const fields = payload.board?.fields;
     if (!fields || !Array.isArray(fields)) return;
 
-    const turnInfo = document.getElementById('game-turn-info');
-    if (turnInfo && payload.state) {
-        const whoMoves = payload.state.ColorToMove === 0 ? "Białe" : "Czarne";
-        const budget = payload.state.CurrentBudget;
-        turnInfo.innerHTML = `Ruch: <b>${whoMoves}</b> | Budżet 🎲: <b>${budget}</b>`;
+    const state = payload.state;
+    const currentUserId = currentPlayer?.id;
+    // Wyznaczamy nasz kolor w tej grze: 0 jeśli nasze ID to white_id, w przeciwnym wypadku 1
+    const myColor = (payload.white_id === currentUserId) ? 0 : 1;
+    updatePlayerBanners(myColor, payload.white_id, payload.black_id);
+    // Obracamy planszę dla czarnego gracza
+    const boardElement = document.getElementById('board');
+    if (boardElement) {
+        if (myColor === 1) {
+            boardElement.classList.add('flipped');
+        } else {
+            boardElement.classList.remove('flipped');
+        }
     }
 
+    // 1. AKTUALIZACJA NAGŁÓWKA (Ruch i Skill)
+    const turnInfo = document.getElementById('game-turn-info');
+    if (turnInfo && state) {
+        const whoMoves = state.ColorToMove === 0 ? "Białe ⬜" : "Czarne ⬛";
+        currentBudget = state.CurrentBudget;
+        turnInfo.innerHTML = `Ruch: <b>${whoMoves}</b></br>Skill 🎲: <b>${currentBudget}</b>`;
+    }
+
+    // 2. SPRAWDZENIE CZY TO TURA AKTUALNEGO GRACZA
+    isMyTurn = state && (
+        (state.ColorToMove === 0 && payload.white_id === currentUserId) ||
+        (state.ColorToMove === 1 && payload.black_id === currentUserId)
+    );
+
+    // 3. ZARZĄDZANIE PRZYCISKAMI (Rzut kostką i Koniec tury)
+    const rollButton = document.getElementById('roll-dice-btn') as HTMLButtonElement;
+    const endTurnButton = document.getElementById('end-turn-btn') as HTMLButtonElement;
+
+    if (state) {
+        // Przycisk rzutu: Moja tura I tura jeszcze NIE rozpoczęta (brak rzutu)
+        if (rollButton) {
+            if (isMyTurn && !state.TurnStarted) {
+                rollButton.style.visibility = 'visible';
+            } else {
+                rollButton.style.visibility = 'hidden';
+            }
+        }
+
+        // Przycisk końca tury: Moja tura I tura JUŻ rozpoczęta (po rzucie)
+        if (endTurnButton) {
+            if (isMyTurn && state.TurnStarted) {
+                endTurnButton.style.visibility = 'visible';
+            } else {
+                endTurnButton.style.visibility = 'hidden';
+            }
+        }
+    }
+
+    // 4. OBSŁUGA FINASOWANIA ANIMACJI KOSTKI
+    const skillPoints = state?.CurrentBudget;
+    if (diceAnimationInterval && skillPoints > 0) {
+        clearInterval(diceAnimationInterval);
+        diceAnimationInterval = null;
+
+        const diceElement = document.getElementById('dice-element')!;
+        if (diceElement) {
+            diceElement.classList.remove('shaking');
+        }
+
+        renderDiceDots(skillPoints);
+
+        // Poprawiony selektor (używamy Twojego roll-btn)
+        if (rollButton) {
+            rollButton.disabled = false;
+        }
+    }
+
+    // 5. RENDEROWANIE PLANSZY I FIGUR
     const squares = document.querySelectorAll('.square');
 
     for (let row = 0; row < 8; row++) {
@@ -697,42 +837,83 @@ function handleGameState(payload: any) {
             if (!pieceData) continue;
 
             const pieceElement = document.createElement('div');
-            pieceElement.className = 'piece';
-            pieceElement.innerText = getPieceIcon(pieceData.type, pieceData.color);
+            const pieceColorClass = pieceData.color === 0 ? 'white' : 'black';
+            pieceElement.className = `piece ${pieceColorClass}`;
+            pieceElement.innerText = getPieceIcon(pieceData.type);
 
-            square.appendChild(pieceElement);
-            // Wywołujemy funkcję globalną - teraz ma pełny dostęp!
-            setupPieceDragAndDrop(pieceElement, index);
-
+            square.appendChild(pieceElement);// 🔥 BLOKADA: Podpinamy Drag & Drop tylko wtedy, gdy kolor figury należy do nas!
+            // pieceData.color musi być równy myColor (np. 0 === 0 dla białego)
+            if (pieceData.color === myColor) {
+                setupPieceDragAndDrop(pieceElement, index);
+            } else {
+                // Opcjonalnie: możemy dodać klasę css, żeby gracz widział, że to nie jego figura
+                pieceElement.style.cursor = 'not-allowed';
+            }
         }
     }
 }
-function getPieceIcon(type: number, color: number): string {
-    if (color === 0) { // BIAŁE
-        switch (type) {
-            case 0: return '♙'; // Pionek
-            case 1: return '♗'; // Goniec
-            case 2: return '♘'; // Skoczek
-            case 3: return '♖'; // Wieża
-            case 4: return '♔'; // Król
-            case 5: return '♕'; // Hetman
-            default: return '?';
-        }
-    } else { // CZARNE
-        switch (type) {
-            case 0: return '♟';
-            case 1: return '♝';
-            case 2: return '♞';
-            case 3: return '♜';
-            case 4: return '♚';
-            case 5: return '♛';
-            default: return '?';
-        }
+
+function updatePlayerBanners(myColor: number, whiteId: number, blackId: number) {
+    const myBanner = document.getElementById('bottom-player-banner');
+    const opponentBanner = document.getElementById('top-player-banner');
+
+    if (myColor === 0) {
+        const myName = getPlayerNameById(whiteId);
+        const opponentName = getPlayerNameById(blackId);
+        const myColorClass = 'white';
+        const opponentColorClass = 'black';
+        myBanner!.innerHTML = `<div class="banner-color-cube ${myColorClass}"></div>
+        <span class="player-name">${myName}</span>`;
+        opponentBanner!.innerHTML = `<div class="banner-color-cube ${opponentColorClass}"></div>
+        <span class="player-name">${opponentName}</span>`;
+    } else {
+        const myName = getPlayerNameById(blackId);
+        const opponentName = getPlayerNameById(whiteId);
+        const myColorClass = 'black';
+        const opponentColorClass = 'white';
+        myBanner!.innerHTML = `<div class="banner-color-cube ${myColorClass}"></div>
+        <span class="player-name">${myName}</span>`;
+        opponentBanner!.innerHTML = `<div class="banner-color-cube ${opponentColorClass}"></div>
+        <span class="player-name">${opponentName}</span>`;
+    }
+
+    // Generujemy czysty, lekki HTML wewnątrz bannera
+}
+
+function getPieceIcon(type: number): string {
+    switch (type) {
+        case 0: return '♟';
+        case 1: return '♝';
+        case 2: return '♞';
+        case 3: return '♜';
+        case 4: return '♛';
+        case 5: return '♚';
+        default: return '?';
     }
 }
-function handleLegalMoves(payload: any) {
-    console.log("Możliwe ruchy dla wybranej figury:", payload);
-    // Tutaj podświetlimy kropkami kafelki, na które figura może skoczyć
+function handleLegalMoves(payload: any) {// 1. Najpierw usuwamy wszelkie istniejące kropki, żeby wyczyścić planszę
+    clearLegalMoves();
+
+    const moves = payload.moves;
+    if (!moves || !Array.isArray(moves)) return;
+
+    // 2. Pobieramy wszystkie kafelki planszy
+    const squares = document.querySelectorAll('.square');
+
+    // 3. Dla każdego dozwolonego indeksu dodajemy kropkę
+    moves.forEach(coords => {
+        const square = squares[coordsToIndex(coords)] as HTMLElement;
+        if (square) {
+            const dot = document.createElement('div');
+            dot.className = 'legal-dot';
+            square.appendChild(dot);
+        }
+    });
+}
+
+// Pomocnicza funkcja do czyszczenia kropek (będziesz jej używać też przy pointerup)
+function clearLegalMoves() {
+    document.querySelectorAll('.legal-dot').forEach(dot => dot.remove());
 }
 
 async function fetchActiveGames(): Promise<any[]> {

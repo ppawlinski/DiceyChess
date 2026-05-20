@@ -19,8 +19,9 @@ body {
 
 /* Panel deweloperski na dole ekranu */
 #dev-router {
-    position: fixed;
-    bottom: 10px;
+    position:relative;
+    bottom: 0px;
+    left: 0px;
     background: rgba(0,0,0,0.8);
     padding: 10px;
     border-radius: 8px;
@@ -73,7 +74,8 @@ li {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 20px;
+    gap: 2px;
+    margin: 0 auto;
 }
 
 .chessboard {
@@ -87,9 +89,11 @@ li {
     border: 4px solid #111;
     box-sizing: border-box;
     touch-action: none;
+    margin: 0;
 }
 
 .square {
+    position: relative; /* Wymagane do pozycjonowania absolutnego kropki */
     display: flex;
     justify-content: center;
     align-items: center;
@@ -186,6 +190,20 @@ li {
     pointer-events: none; 
 }
 
+/* Styl dla BIAŁYCH figur */
+.piece.white {
+    color: #ffffff;
+    /* Delikatny ciemny cień, żeby biała figura była dobrze widoczna na jasnych polach */
+    filter: drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.6));
+}
+
+/* Styl dla CZARNYCH figur */
+.piece.black {
+    color: #1a1a1a; /* Bardzo ciemny szary/czarny */
+    /* Jasny cień/poświata, żeby czarna figura nie znikała na ciemnobrązowych/czarnych polach */
+    filter: drop-shadow(0px 0px 1px #ffffff) drop-shadow(0px 1px 2px rgba(0, 0, 0, 0.8));
+}
+
 /* Kiedy figura dostanie klasę .dragging, przywracamy jej pointer-events, by móc ją upuścić */
 .piece.dragging {
     pointer-events: auto;
@@ -193,4 +211,106 @@ li {
 
 .piece:active {
     cursor: grabbing;
+}
+
+
+/* Jeśli plansza ma klasę flipped, obracamy ją całą o 180 stopni */
+.chessboard.flipped {
+    transform: rotate(180deg);
+}
+
+.chessboard.flipped .piece,
+.chessboard.flipped .legal-dot {
+    transform: rotate(180deg);
+}
+
+/* Styl kropki legalnego ruchu */
+.legal-dot {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    background-color: rgba(0, 0, 0, 0.25); /* Ciemna, półprzezroczysta kropka */
+    border-radius: 50%;
+    pointer-events: none; /* Sprawia, że kropka nie przeszkadza w dropowaniu figury */
+    z-index: 5;
+}
+
+/* Zabezpieczenie dla obróconej planszy czarnego (żeby przeglądarka nie zniekształciła punktu) */
+.chessboard.flipped .legal-dot {
+    transform: rotate(180deg);
+}
+
+.player-banner {
+    align-self: flex-start;
+    display: flex;
+    align-items: center;
+    gap: 10px; /* Odstęp między kwadracikiem a nazwą gracza */
+    height: 32px; /* Niski profil, żeby nie marnować miejsca w pionie */
+    padding: 0 5px;
+    background-color: #262522; /* Ciemne, eleganckie tło szachowe */
+    color: #bababa;
+    font-family: sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 4px;
+    margin: 0px; /* Minimalny margines nad/pod planszą */
+    box-sizing: border-box;
+    justify-content: flex-start;
+}
+
+/* Uniwersalny styl dla małego kwadracika koloru */
+.banner-color-cube {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
+/* Warianty kolorów dla kwadracików */
+.banner-color-cube.white {
+    background-color: #ffffff;
+}
+
+.banner-color-cube.black {
+    background-color: #1a1a1a;
+    outline: 1px solid #404040; /* Żeby czarny kwadrat nie zlał się z ciemnym tłem banneru */
+}
+
+.board-wrapper {
+    position: relative; /* Wymagane, aby przycisk centrował się względem planszy */
+    display: inline-block;
+}
+
+.center-dice-btn {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%); /* Idealne wyśrodkowanie */
+    
+    /* Wygląd przycisku - dopasuj pod siebie */
+    padding: 15px 30px;
+    font-size: 18px;
+    font-weight: bold;
+    color: #ffffff;
+    background-color: #b53434; /* Elegancki czerwony */
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    z-index: 100; /* Wyżej niż figury i kropki */
+    transition: transform 0.1s ease, background-color 0.2s;
+}
+.center-dice-btn:hover {
+    background-color: #9c2b2b;
+    transform: translate(-50%, -50%) scale(1.05); /* Lekkie powiększenie na hover */
+}
+
+.center-dice-btn:active {
+    transform: translate(-50%, -50%) scale(0.98);
+}
+
+/* Ważne: Jeśli plansza gracza czarnego jest obrócona, przycisk NIE może być do góry nogami */
+.chessboard.flipped ~ .center-dice-btn {
+    /* Jeśli cała plansza jest obrócona, ten selektor dba o to, by tekst przycisku był prosto */
+    /* (Zależy od tego, jak dokładnie masz spiętą klasę .flipped) */
 }

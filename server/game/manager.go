@@ -53,9 +53,11 @@ func (gm *GameManager) Snapshot(id int64) (*GameSnapshot, bool) {
 
 // SerializedGame to format zapisu do bazy
 type SerializedGame struct {
-	Board string `json:"board"`
-	State string `json:"state"`
-	Seed  int64  `json:"seed"`
+	Board   string `json:"board"`
+	State   string `json:"state"`
+	Seed    int64  `json:"seed"`
+	WhiteID int64  `json:"white_id"`
+	BlackID int64  `json:"black_id"`
 }
 
 func (g *Game) Serialize() (string, error) {
@@ -68,9 +70,11 @@ func (g *Game) Serialize() (string, error) {
 		return "", err
 	}
 	sg := SerializedGame{
-		Board: string(boardJSON),
-		State: string(stateJSON),
-		Seed:  g.Dice.seed,
+		Board:   string(boardJSON),
+		State:   string(stateJSON),
+		Seed:    g.Dice.seed,
+		WhiteID: g.WhiteID,
+		BlackID: g.BlackID,
 	}
 	data, err := json.Marshal(sg)
 	return string(data), err
@@ -96,10 +100,12 @@ func DeserializeGame(data string) (*Game, error) {
 	turn := NewTurn(state, board, dice)
 
 	return &Game{
-		Board: board,
-		State: state,
-		Dice:  dice,
-		turn:  turn,
+		Board:   board,
+		State:   state,
+		Dice:    dice,
+		turn:    turn,
+		WhiteID: sg.WhiteID,
+		BlackID: sg.BlackID,
 	}, nil
 }
 

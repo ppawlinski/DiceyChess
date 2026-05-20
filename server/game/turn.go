@@ -20,7 +20,6 @@ func (t *Turn) Start() {
 	t.State.CurrentBudget = roll + leftover
 	t.State.LeftoverBudget[t.State.ColorToMove] = 0
 	t.State.TurnStarted = true
-	t.State.MovedThisTurn = false
 	t.State.CapturedThisTurn = make(map[Coordinates]bool)
 	t.State.EnPassant = InvalidCoordinates
 }
@@ -39,11 +38,6 @@ func (t *Turn) End() {
 	// zasada 7 - plansza musi być inna
 	// (sprawdzane przed wywołaniem End)
 
-	// nieużyty budżet przepada, ale max 1 punkt przechodzi
-	if t.State.CurrentBudget > 0 {
-		t.State.LeftoverBudget[t.State.ColorToMove] = 1
-	}
-
 	// zmiana gracza
 	if t.State.ColorToMove == White {
 		t.State.ColorToMove = Black
@@ -52,7 +46,6 @@ func (t *Turn) End() {
 	}
 
 	t.State.TurnStarted = false
-	t.State.MovedThisTurn = false
 }
 
 func (t *Turn) SkipIfNecessary() bool {

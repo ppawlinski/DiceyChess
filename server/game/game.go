@@ -32,10 +32,7 @@ type MoveRequest struct {
 
 func (g *Game) StartTurn() {
 	g.turn.Start()
-	if g.turn.SkipIfNecessary() {
-		g.turn.Start()
-		g.turn.SkipIfNecessary()
-	}
+	g.turn.SkipIfNecessary()
 }
 
 func (g *Game) GetLegalMoves(from Coordinates) ([]Coordinates, error) {
@@ -72,7 +69,7 @@ func (g *Game) MakeMove(req MoveRequest) error {
 	isInCheck := KingInCheck(g.Board, g.State.ColorToMove)
 
 	// pierwszy ruch gdy szach musi wyjść z szacha
-	if isInCheck && !g.State.MovedThisTurn {
+	if isInCheck {
 		legalMoves := piece.GetPossibleMoves(g.Board, req.From, g.State.EnPassant)
 		found := false
 		for _, m := range legalMoves {
@@ -106,7 +103,7 @@ func (g *Game) MakeMove(req MoveRequest) error {
 	// wykonaj ruch
 	captured := g.Board.Get(req.To)
 	if captured != nil {
-		g.State.CapturedThisTurn[req.From] = true
+		g.State.CapturedThisTurn[req.To] = true
 	}
 
 	// en passant - zbij pionka
@@ -162,8 +159,9 @@ func (g *Game) MakeMove(req MoveRequest) error {
 	}
 
 	g.State.SpendBudget(piece.Type(), isInCheck)
-	g.State.MovedThisTurn = true
-
+	if g.State.CurrentBudget == 0 {
+		g.EndTurn()
+	}
 	// sprawdź mat
 	opponent := Black
 	if g.State.ColorToMove == Black {
@@ -180,11 +178,8 @@ func (g *Game) MakeMove(req MoveRequest) error {
 }
 
 func (g *Game) EndTurn() error {
-	if !g.State.MovedThisTurn {
-		return ErrBoardUnchanged
-	}
+	//!!!3PPA todo compare initial copy of the board with current to chec k if state changed
 	g.turn.End()
-	g.StartTurn()
 	return nil
 }
 

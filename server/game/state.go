@@ -18,7 +18,6 @@ type GameState struct {
 	LeftoverBudget   [ColorLength]int
 	EnPassant        Coordinates
 	TurnStarted      bool
-	MovedThisTurn    bool
 	CapturedThisTurn map[Coordinates]bool
 	IsOver           bool
 	Winner           *Color // nil jeśli remis
@@ -31,7 +30,6 @@ func NewGameState() *GameState {
 		LeftoverBudget:   [ColorLength]int{0, 0},
 		EnPassant:        InvalidCoordinates,
 		TurnStarted:      false,
-		MovedThisTurn:    false,
 		CapturedThisTurn: make(map[Coordinates]bool),
 		IsOver:           false,
 		Winner:           nil,
@@ -67,7 +65,6 @@ func (gs *GameState) MarshalJSON() ([]byte, error) {
 		LeftoverBudget   [ColorLength]int
 		EnPassant        Coordinates
 		TurnStarted      bool
-		MovedThisTurn    bool
 		CapturedThisTurn map[string]bool
 		IsOver           bool
 		Winner           *Color
@@ -79,7 +76,6 @@ func (gs *GameState) MarshalJSON() ([]byte, error) {
 		LeftoverBudget:   gs.LeftoverBudget,
 		EnPassant:        gs.EnPassant,
 		TurnStarted:      gs.TurnStarted,
-		MovedThisTurn:    gs.MovedThisTurn,
 		CapturedThisTurn: captured,
 		IsOver:           gs.IsOver,
 		Winner:           gs.Winner,
@@ -93,7 +89,6 @@ func (gs *GameState) UnmarshalJSON(data []byte) error {
 		LeftoverBudget   [ColorLength]int
 		EnPassant        Coordinates
 		TurnStarted      bool
-		MovedThisTurn    bool
 		CapturedThisTurn map[string]bool
 		IsOver           bool
 		Winner           *Color
@@ -109,7 +104,6 @@ func (gs *GameState) UnmarshalJSON(data []byte) error {
 	gs.LeftoverBudget = a.LeftoverBudget
 	gs.EnPassant = a.EnPassant
 	gs.TurnStarted = a.TurnStarted
-	gs.MovedThisTurn = a.MovedThisTurn
 	gs.IsOver = a.IsOver
 	gs.Winner = a.Winner
 

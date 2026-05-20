@@ -310,15 +310,23 @@ func (h *Hub) handleEndTurn(c *Client, payload json.RawMessage) {
 		return
 	}
 
+	// sprawdź czy to tura tego gracza
+	currentPlayerID := g.WhiteID
+	if g.State.ColorToMove == game.Black {
+		currentPlayerID = g.BlackID
+	}
+	if c.PlayerID != currentPlayerID {
+		h.sendError(c, "not your turn")
+		return
+	}
+
 	if err := g.EndTurn(); err != nil {
 		h.sendError(c, err.Error())
 		return
 	}
 
-	state, err := g.Serialize()
-	if err == nil {
-		h.DB.UpdateGameState(req.GameID, state)
-	}
+	state, _ := g.Serialize()
+	h.DB.UpdateGameState(req.GameID, state)
 
 	h.broadcastGameState(req.GameID, g)
 }
@@ -350,9 +358,11 @@ func (h *Hub) broadcastGameState(gameID int64, g *game.Game) {
 	h.mu.RUnlock()
 
 	payload, _ := json.Marshal(map[string]any{
-		"game_id": gameID,
-		"board":   g.Board,
-		"state":   g.State,
+		"game_id":  gameID,
+		"board":    g.Board,
+		"state":    g.State,
+		"white_id": g.WhiteID,
+		"black_id": g.BlackID,
 	})
 	msg := Message{Type: "game_state", Payload: payload}
 
