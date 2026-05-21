@@ -210,7 +210,7 @@ func (h *Hub) handleRollDice(c *Client, payload json.RawMessage) {
 	state, _ := g.Serialize()
 	h.DB.UpdateGameState(req.GameID, state)
 
-	h.broadcastGameState(req.GameID, g)
+	h.broadcastGameState(req.GameID, g, "dice_roll")
 }
 
 func (h *Hub) handleGetLegalMoves(c *Client, payload json.RawMessage) {
@@ -292,7 +292,7 @@ func (h *Hub) handleMakeMove(c *Client, payload json.RawMessage) {
 	}
 
 	// wyślij nowy stan obu graczom
-	h.broadcastGameState(req.GameID, g)
+	h.broadcastGameState(req.GameID, g, "game_state")
 }
 
 func (h *Hub) handleEndTurn(c *Client, payload json.RawMessage) {
@@ -328,7 +328,7 @@ func (h *Hub) handleEndTurn(c *Client, payload json.RawMessage) {
 	state, _ := g.Serialize()
 	h.DB.UpdateGameState(req.GameID, state)
 
-	h.broadcastGameState(req.GameID, g)
+	h.broadcastGameState(req.GameID, g, "game_state")
 }
 
 func (h *Hub) handleJoinGame(c *Client, payload json.RawMessage) {
@@ -349,10 +349,10 @@ func (h *Hub) handleJoinGame(c *Client, payload json.RawMessage) {
 		return
 	}
 
-	h.broadcastGameState(req.GameID, g)
+	h.broadcastGameState(req.GameID, g, "game_state")
 }
 
-func (h *Hub) broadcastGameState(gameID int64, g *game.Game) {
+func (h *Hub) broadcastGameState(gameID int64, g *game.Game, messageType string) {
 	h.mu.RLock()
 	players := h.gameClients[gameID]
 	h.mu.RUnlock()
@@ -364,7 +364,7 @@ func (h *Hub) broadcastGameState(gameID int64, g *game.Game) {
 		"white_id": g.WhiteID,
 		"black_id": g.BlackID,
 	})
-	msg := Message{Type: "game_state", Payload: payload}
+	msg := Message{Type: messageType, Payload: payload}
 
 	for _, playerID := range players {
 		h.SendTo(playerID, msg)
@@ -374,6 +374,13 @@ func (h *Hub) broadcastGameState(gameID int64, g *game.Game) {
 func (h *Hub) JoinGame(gameID, playerID int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	for _, id := range h.gameClients[gameID] {
+		if id == playerID {
+			return
+		}
+	}
+
 	h.gameClients[gameID] = append(h.gameClients[gameID], playerID)
 }
 

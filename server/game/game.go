@@ -32,7 +32,6 @@ type MoveRequest struct {
 
 func (g *Game) StartTurn() {
 	g.turn.Start()
-	g.turn.SkipIfNecessary()
 }
 
 func (g *Game) GetLegalMoves(from Coordinates) ([]Coordinates, error) {
@@ -68,7 +67,7 @@ func (g *Game) MakeMove(req MoveRequest) error {
 
 	isInCheck := KingInCheck(g.Board, g.State.ColorToMove)
 
-	// pierwszy ruch gdy szach musi wyjść z szacha
+	// pierwszy ruch gdy król musi wyjść z szacha
 	if isInCheck {
 		legalMoves := piece.GetPossibleMoves(g.Board, req.From, g.State.EnPassant)
 		found := false
@@ -151,7 +150,7 @@ func (g *Game) MakeMove(req MoveRequest) error {
 			return ErrInvalidPromotion
 		}
 		promotionCost := MoveCost(*req.PromoteTo)
-		if g.State.CurrentBudget < promotionCost {
+		if g.State.Budgets[g.State.ColorToMove] < promotionCost {
 			return ErrInsufficientBudget
 		}
 		g.State.SpendBudget(*req.PromoteTo, false)
@@ -159,7 +158,7 @@ func (g *Game) MakeMove(req MoveRequest) error {
 	}
 
 	g.State.SpendBudget(piece.Type(), isInCheck)
-	if g.State.CurrentBudget == 0 {
+	if g.State.Budgets[g.State.ColorToMove] == 0 {
 		g.EndTurn()
 	}
 	// sprawdź mat

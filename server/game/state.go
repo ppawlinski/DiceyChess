@@ -14,8 +14,8 @@ type coordinateKey struct {
 
 type GameState struct {
 	ColorToMove      Color
-	CurrentBudget    int
-	LeftoverBudget   [ColorLength]int
+	LastRoll         int
+	Budgets          [ColorLength]int
 	EnPassant        Coordinates
 	TurnStarted      bool
 	CapturedThisTurn map[Coordinates]bool
@@ -26,8 +26,8 @@ type GameState struct {
 func NewGameState() *GameState {
 	return &GameState{
 		ColorToMove:      White,
-		CurrentBudget:    0,
-		LeftoverBudget:   [ColorLength]int{0, 0},
+		LastRoll:         0,
+		Budgets:          [ColorLength]int{0, 0},
 		EnPassant:        InvalidCoordinates,
 		TurnStarted:      false,
 		CapturedThisTurn: make(map[Coordinates]bool),
@@ -41,7 +41,7 @@ func (gs *GameState) HasBudgetFor(pt PieceType, isKingInCheck bool) bool {
 	if pt == KingType && isKingInCheck {
 		cost = CheckedKingCost
 	}
-	return gs.CurrentBudget >= cost
+	return gs.Budgets[gs.ColorToMove] >= cost
 }
 
 func (gs *GameState) SpendBudget(pt PieceType, isKingInCheck bool) {
@@ -49,7 +49,7 @@ func (gs *GameState) SpendBudget(pt PieceType, isKingInCheck bool) {
 	if pt == KingType && isKingInCheck {
 		cost = CheckedKingCost
 	}
-	gs.CurrentBudget -= cost
+	gs.Budgets[gs.ColorToMove] -= cost
 }
 
 func (gs *GameState) MarshalJSON() ([]byte, error) {
@@ -61,8 +61,8 @@ func (gs *GameState) MarshalJSON() ([]byte, error) {
 
 	type Alias struct {
 		ColorToMove      Color
-		CurrentBudget    int
-		LeftoverBudget   [ColorLength]int
+		LastRoll         int
+		Budgets          [ColorLength]int
 		EnPassant        Coordinates
 		TurnStarted      bool
 		CapturedThisTurn map[string]bool
@@ -72,8 +72,8 @@ func (gs *GameState) MarshalJSON() ([]byte, error) {
 
 	return json.Marshal(Alias{
 		ColorToMove:      gs.ColorToMove,
-		CurrentBudget:    gs.CurrentBudget,
-		LeftoverBudget:   gs.LeftoverBudget,
+		LastRoll:         gs.LastRoll,
+		Budgets:          gs.Budgets,
 		EnPassant:        gs.EnPassant,
 		TurnStarted:      gs.TurnStarted,
 		CapturedThisTurn: captured,
@@ -85,8 +85,8 @@ func (gs *GameState) MarshalJSON() ([]byte, error) {
 func (gs *GameState) UnmarshalJSON(data []byte) error {
 	type Alias struct {
 		ColorToMove      Color
-		CurrentBudget    int
-		LeftoverBudget   [ColorLength]int
+		LastRoll         int
+		Budgets          [ColorLength]int
 		EnPassant        Coordinates
 		TurnStarted      bool
 		CapturedThisTurn map[string]bool
@@ -100,8 +100,8 @@ func (gs *GameState) UnmarshalJSON(data []byte) error {
 	}
 
 	gs.ColorToMove = a.ColorToMove
-	gs.CurrentBudget = a.CurrentBudget
-	gs.LeftoverBudget = a.LeftoverBudget
+	gs.LastRoll = a.LastRoll
+	gs.Budgets = a.Budgets
 	gs.EnPassant = a.EnPassant
 	gs.TurnStarted = a.TurnStarted
 	gs.IsOver = a.IsOver

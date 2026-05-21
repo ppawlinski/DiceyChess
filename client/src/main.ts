@@ -183,6 +183,15 @@ function initWebSocket() {
                     currentLegalMoves = (message.payload.moves || []).map((m: any) => coordsToIndex(m));
                     handleLegalMoves(message.payload);
                     break;
+                case "dice_roll":
+                    if (resolveDiceResponse) {
+                        // Przekazujemy dane z serwera do oczekującego Promise.all
+                        resolveDiceResponse(message.payload);
+                        resolveDiceResponse = null; // Czyszczenie
+                    } else {
+                        handleGameState(message.payload);
+                    }
+                    break;
                 case 'error':
                     console.log(`Błąd serwera (WS): ${message.payload.error}`);
                     break;
@@ -496,6 +505,9 @@ function renderDiceDots(value: number) {
     const dotPositions: { [key: number]: number[] } = {
         1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8]
     };
+    if (value === 0) {
+        value = 1;
+    }
     diceElement.innerHTML = '';
     for (let i = 0; i < 9; i++) {
         const cell = document.createElement('div');
@@ -535,21 +547,19 @@ function handleRollDice() {
         // 🔥 TEN BLOK URUCHOMI SIĘ DOPIERO PO MINIMUM 1 SEKUNDZIE
         // (i dopiero gdy serwer odeśle dane)
 
-        stopDiceAnimation(); // Zatrzymujemy animację
+        //        stopDiceAnimation(); // Zatrzymujemy animację
 
         // Pokazujemy ostateczny wynik na kostce
-        renderDiceResult(serverResponse.CurrentDice);
+        //renderDiceResult(serverResponse.CurrentDice);
 
         // Na samym końcu bezpiecznie aktualizujemy budżet i resztę stanu
-        updateBudget(serverResponse.CurrentBudget);
-        updateGameState(serverResponse);
+        handleGameState(serverResponse);
     });
 }
 
 // 3. Obsługa Drag & Drop za pomocą Pointer Events (PC & Mobile)
 function setupPieceDragAndDrop(piece: HTMLElement, startIndex: number) {
     piece.addEventListener('dragstart', (e) => e.preventDefault());
-
     // Nasłuchujemy na parentSquare (czyli na kafelku), bo figura ma pointer-events: none
     const parentSquare = piece.parentElement!;
 
@@ -665,7 +675,7 @@ function coordsToIndex(coords: any) {
 }
 
 function getLegalMoves(startIndex: number) {
-    if (isMyTurn && currentBudget > 0) {
+    if (isMyTurn) {
         sendWSMessage("get_legal_moves", {
             game_id: activeGameId,
             from: indexToCoords(startIndex)
@@ -681,7 +691,7 @@ function executeMove(fromIndex: number, toIndex: number) {
     }
 
     const isMoveLegal = currentLegalMoves.includes(toIndex);
-    if (isMyTurn && isMoveLegal && currentBudget > 0) {
+    if (isMyTurn && isMoveLegal) {
 
         sendWSMessage("make_move", {
             game_id: activeGameId,
@@ -754,7 +764,18 @@ function handleGameState(payload: any) {
     const currentUserId = currentPlayer?.id;
     // Wyznaczamy nasz kolor w tej grze: 0 jeśli nasze ID to white_id, w przeciwnym wypadku 1
     const myColor = (payload.white_id === currentUserId) ? 0 : 1;
-    updatePlayerBanners(myColor, payload.white_id, payload.black_id);
+    updatePlayerBanner(
+        'bottom-player-banner',
+        currentUserId!,
+        myColor ? 'black' : 'white',
+        state.Budgets[myColor]
+    );
+    updatePlayerBanner(
+        'top-player-banner',
+        myColor ? payload.white_id : payload.black_id,
+        myColor ? 'white' : 'black',
+        state.Budgets[myColor ? 0 : 1]
+    );
     // Obracamy planszę dla czarnego gracza
     const boardElement = document.getElementById('board');
     if (boardElement) {
@@ -769,8 +790,7 @@ function handleGameState(payload: any) {
     const turnInfo = document.getElementById('game-turn-info');
     if (turnInfo && state) {
         const whoMoves = state.ColorToMove === 0 ? "Białe ⬜" : "Czarne ⬛";
-        currentBudget = state.CurrentBudget;
-        turnInfo.innerHTML = `Ruch: <b>${whoMoves}</b></br>Skill 🎲: <b>${currentBudget}</b>`;
+        turnInfo.innerHTML = `Ruch: <b>${whoMoves}</b>`;
     }
 
     // 2. SPRAWDZENIE CZY TO TURA AKTUALNEGO GRACZA
@@ -786,8 +806,10 @@ function handleGameState(payload: any) {
     if (state) {
         // Przycisk rzutu: Moja tura I tura jeszcze NIE rozpoczęta (brak rzutu)
         if (rollButton) {
+            console.log(isMyTurn, state.TurnStarted)
             if (isMyTurn && !state.TurnStarted) {
                 rollButton.style.visibility = 'visible';
+                rollButton.style.display = 'block';
             } else {
                 rollButton.style.visibility = 'hidden';
             }
@@ -797,15 +819,18 @@ function handleGameState(payload: any) {
         if (endTurnButton) {
             if (isMyTurn && state.TurnStarted) {
                 endTurnButton.style.visibility = 'visible';
+                rollButton.style.display = 'block';
             } else {
                 endTurnButton.style.visibility = 'hidden';
             }
         }
     }
 
-    // 4. OBSŁUGA FINASOWANIA ANIMACJI KOSTKI
-    const skillPoints = state?.CurrentBudget;
-    if (diceAnimationInterval && skillPoints > 0) {
+    // 4. OBSŁUGA FINiShOWANIA ANIMACJI KOSTKI
+    const diceResult = state.LastRoll;
+
+    renderDiceDots(diceResult);
+    if (diceAnimationInterval && diceResult > 0) {
         clearInterval(diceAnimationInterval);
         diceAnimationInterval = null;
 
@@ -813,8 +838,6 @@ function handleGameState(payload: any) {
         if (diceElement) {
             diceElement.classList.remove('shaking');
         }
-
-        renderDiceDots(skillPoints);
 
         // Poprawiony selektor (używamy Twojego roll-btn)
         if (rollButton) {
@@ -853,31 +876,22 @@ function handleGameState(payload: any) {
     }
 }
 
-function updatePlayerBanners(myColor: number, whiteId: number, blackId: number) {
-    const myBanner = document.getElementById('bottom-player-banner');
-    const opponentBanner = document.getElementById('top-player-banner');
+function updatePlayerBanner(bannerId: string, playerId: number, colorClass: 'white' | 'black', skill: number) {
+    const banner = document.getElementById(bannerId);
 
-    if (myColor === 0) {
-        const myName = getPlayerNameById(whiteId);
-        const opponentName = getPlayerNameById(blackId);
-        const myColorClass = 'white';
-        const opponentColorClass = 'black';
-        myBanner!.innerHTML = `<div class="banner-color-cube ${myColorClass}"></div>
-        <span class="player-name">${myName}</span>`;
-        opponentBanner!.innerHTML = `<div class="banner-color-cube ${opponentColorClass}"></div>
-        <span class="player-name">${opponentName}</span>`;
-    } else {
-        const myName = getPlayerNameById(blackId);
-        const opponentName = getPlayerNameById(whiteId);
-        const myColorClass = 'black';
-        const opponentColorClass = 'white';
-        myBanner!.innerHTML = `<div class="banner-color-cube ${myColorClass}"></div>
-        <span class="player-name">${myName}</span>`;
-        opponentBanner!.innerHTML = `<div class="banner-color-cube ${opponentColorClass}"></div>
-        <span class="player-name">${opponentName}</span>`;
-    }
+    if (!banner) return;
 
-    // Generujemy czysty, lekki HTML wewnątrz bannera
+    const playerName = getPlayerNameById(playerId);
+
+    banner.innerHTML = `
+        <div class="banner-color-cube ${colorClass}"></div>
+        <span class="player-name">${playerName}</span>
+        <div class="banner-skill-badge">
+            <span class="skill-icon">🎲</span>
+            <span class="skill-label">Skill:</span>
+            <span class="skill-value">${skill}</span>
+        </div>
+    `;
 }
 
 function getPieceIcon(type: number): string {
@@ -894,6 +908,7 @@ function getPieceIcon(type: number): string {
 function handleLegalMoves(payload: any) {// 1. Najpierw usuwamy wszelkie istniejące kropki, żeby wyczyścić planszę
     clearLegalMoves();
 
+    console.log("dupaLegalMoves");
     const moves = payload.moves;
     if (!moves || !Array.isArray(moves)) return;
 
@@ -904,9 +919,16 @@ function handleLegalMoves(payload: any) {// 1. Najpierw usuwamy wszelkie istniej
     moves.forEach(coords => {
         const square = squares[coordsToIndex(coords)] as HTMLElement;
         if (square) {
-            const dot = document.createElement('div');
-            dot.className = 'legal-dot';
-            square.appendChild(dot);
+            const hasPiece = square.querySelector('.piece') !== null;
+            if (hasPiece) {
+                // 3. Jeśli jest tu figura, to w legalnym ruchu oznacza to BICIE -> dajemy pomarańczową klasę
+                square.classList.add('capture-target');
+            } else {
+                // 4. Jeśli pole jest puste -> rysujemy standardową kropkę
+                const dot = document.createElement('div');
+                dot.className = 'legal-dot';
+                square.appendChild(dot);
+            }
         }
     });
 }
@@ -914,6 +936,9 @@ function handleLegalMoves(payload: any) {// 1. Najpierw usuwamy wszelkie istniej
 // Pomocnicza funkcja do czyszczenia kropek (będziesz jej używać też przy pointerup)
 function clearLegalMoves() {
     document.querySelectorAll('.legal-dot').forEach(dot => dot.remove());
+    document.querySelectorAll('.square').forEach(square => {
+        square.classList.remove('capture-target');
+    });
 }
 
 async function fetchActiveGames(): Promise<any[]> {
