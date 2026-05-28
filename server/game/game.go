@@ -25,9 +25,13 @@ func NewGame(seed int64) *Game {
 }
 
 type MoveRequest struct {
-	From      Coordinates
-	To        Coordinates
-	PromoteTo *PieceType // nil jeśli nie promocja
+	From Coordinates
+	To   Coordinates
+}
+
+type PromoteRequest struct {
+	At        Coordinates
+	PromoteTo PieceType
 }
 
 func (g *Game) StartTurn() {
@@ -141,36 +145,9 @@ func (g *Game) MakeMove(req MoveRequest) error {
 	g.Board.Remove(req.From)
 	g.Board.Set(req.To, piece)
 
-	// promocja
-	if piece.Type() == PawnType && IsPromotionSquare(req.To, piece.Piece().Color) {
-		if req.PromoteTo == nil {
-			return ErrInvalidPromotion
-		}
-		if !CanPromoteTo(*req.PromoteTo) {
-			return ErrInvalidPromotion
-		}
-		promotionCost := MoveCost(*req.PromoteTo)
-		if g.State.Budgets[g.State.ColorToMove] < promotionCost {
-			return ErrInsufficientBudget
-		}
-		g.State.SpendBudget(*req.PromoteTo, false)
-		HandlePromotion(g.Board, req.To, piece.Piece().Color, *req.PromoteTo)
-	}
-
 	g.State.SpendBudget(piece.Type(), isInCheck)
 	if g.State.Budgets[g.State.ColorToMove] == 0 {
 		g.EndTurn()
-	}
-	// sprawdź mat
-	opponent := Black
-	if g.State.ColorToMove == Black {
-		opponent = White
-	}
-	if KingInCheck(g.Board, opponent) {
-		if !g.turn.hasAnyLegalMove() {
-			g.State.IsOver = true
-			g.State.Winner = &g.State.ColorToMove
-		}
 	}
 
 	return nil
@@ -179,6 +156,51 @@ func (g *Game) MakeMove(req MoveRequest) error {
 func (g *Game) EndTurn() error {
 	//!!!3PPA todo compare initial copy of the board with current to chec k if state changed
 	g.turn.End()
+	// sprawdź mat/pat dla następnego gracza
+	opponent := g.State.ColorToMove // po End() to już następny gracz
+	if !g.turn.hasAnyLegalMoveForColor(opponent) {
+		g.State.IsOver = true
+		if KingInCheck(g.Board, opponent) {
+			winner := White
+			if opponent == White {
+				winner = Black
+			}
+			g.State.Winner = &winner
+		}
+		// pat - Winner zostaje nil
+	}
+	return nil
+}
+
+func (g *Game) Promote(req PromoteRequest) error {
+	if g.State.IsOver {
+		return ErrGameOver
+	}
+
+	piece := g.Board.Get(req.At)
+	if piece == nil || piece.Type() != PawnType {
+		return ErrNotAPromotablePawn
+	}
+	if piece.Piece().Color != g.State.ColorToMove {
+		return ErrNotYourTurn
+	}
+	if !IsPromotionSquare(req.At, piece.Piece().Color) {
+		return ErrNotAPromotablePawn
+	}
+	if !CanPromoteTo(req.PromoteTo) {
+		return ErrInvalidPromotion
+	}
+	if !g.State.HasBudgetFor(req.PromoteTo, false) {
+		return ErrInsufficientBudget
+	}
+
+	g.State.SpendBudget(req.PromoteTo, false)
+	HandlePromotion(g.Board, req.At, piece.Piece().Color, req.PromoteTo)
+
+	if g.State.Budgets[g.State.ColorToMove] == 0 {
+		g.EndTurn()
+	}
+
 	return nil
 }
 

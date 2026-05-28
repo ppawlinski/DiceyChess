@@ -3,6 +3,10 @@ package game
 func FilterIllegalMoves(b *Board, from Coordinates, candidates []Coordinates, color Color) []Coordinates {
 	var legal []Coordinates
 	for _, to := range candidates {
+		target := b.Get(to)
+		if target != nil && target.Type() == KingType {
+			continue
+		}
 		clone := b.Clone()
 		piece := clone.Get(from)
 		clone.Remove(from)

@@ -15,9 +15,32 @@ let diceAnimationInterval: number | null = null;
 let currentLegalMoves: number[] = [];
 let selectedSquareIndex: number | null = null;
 let isMyTurn: boolean = false;
-let currentBudget: number = 0;
 let resolveDiceResponse: ((value: any) => void) | null = null;
+let myColor: number | null = null;
+let promotionPawnIndex: number | null = null;
+let currentBudget: number = 0;
+
+const PROMOTION_PIECES = [
+    { type: 4, icon: '♛', name: 'Hetman',  cost: 4 },
+    { type: 3, icon: '♜', name: 'Wieża',   cost: 3 },
+    { type: 1, icon: '♝', name: 'Goniec',  cost: 2 },
+    { type: 2, icon: '♞', name: 'Skoczek', cost: 2 },
+];
 // --- 1. WIDOK LOGOWANIA ---
+
+document.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement;
+
+    // Sprawdzamy, czy kliknięty element ma ID naszego przycisku
+    if (target && target.id === 'logout-btn') {
+        // 1. Czyszczenie danych autoryzacyjnych (dopasuj klucze do swojego projektu)
+        localStorage.removeItem('chess_token');
+        localStorage.removeItem('chess_player');
+        sessionStorage.clear(); // Na wypadek, gdybyś tam też coś trzymał
+
+        switchView("login");
+    }
+});
 
 function initLogin() {
     app.innerHTML = `
@@ -226,7 +249,10 @@ async function initLobby() {
 
     app.innerHTML = `
         <div class="screen">
-            <h3>Witaj w Lobby, <span id="lobby-username" style="color: #4caf50;">Gracz</span>!</h3>
+            <div class="lobby-header">
+                <h3>Witaj w Lobby, <span id="lobby-username" style="color: #4caf50;">Gracz</span>!</h3>
+                <button id="logout-btn" class="logout-button">Wyloguj się 🚪</button>
+            </div>
             
             <div class="lobby-section">
                 <h4>Gracze Online:</h4>
@@ -432,10 +458,10 @@ function initGame() {
         square.dataset.index = i.toString();
 
         // Mechanizm obsługi kliknięć (alternatywa dla Drag&Drop, idealna na Mobile)
-        square.addEventListener('click', (e) => {
-            // Jeśli kliknięto w figurę, ignorujemy ten handler, bo obsłuży go Drag&Drop
+        square.addEventListener('click', () => {
             const hasPiece = square.querySelector('.piece') !== null;
             if (hasPiece && selectedSquareIndex === null) {
+                if (square.dataset.promotable === 'true') handleSquareClick(i);
                 return;
             }
             handleSquareClick(i);
@@ -475,10 +501,17 @@ function initGame() {
 
 // 2. Obsługa logiki klikania (Wybór -> Ruch)
 function handleSquareClick(clickedIndex: number) {
-    console.log("handleSquareClick");
     const board = document.getElementById('board')!;
     const clickedSquare = board.querySelector(`[data-index="${clickedIndex}"]`) as HTMLElement;
     const currentSelected = board.querySelector('.selected') as HTMLElement;
+
+    if (clickedSquare.dataset.promotable === 'true') {
+        if (currentSelected) currentSelected.classList.remove('selected');
+        selectedSquareIndex = null;
+        clearLegalMoves();
+        showPromotionDropdown(clickedIndex);
+        return;
+    }
 
     if (selectedSquareIndex === null) {
         // KROK 1: Wybór figury poprzez kliknięcie
@@ -753,17 +786,69 @@ function handleGameStarted(payload: any) {
     });
 }
 
+function hideGameOverModal() {
+    const overlay = document.getElementById('game-over-overlay');
+    if (overlay) overlay.style.display = 'none';
+}
+
+function handleGameOver(winnerColor: number) {
+    const rollButton = document.getElementById('roll-dice-btn');
+    if (rollButton) rollButton.style.display = 'none';
+
+    const overlay = document.getElementById('game-over-overlay');
+    const titleElement = document.getElementById('modal-title');
+    const messageElement = document.getElementById('modal-message');
+    const lobbyButton = document.getElementById('modal-lobby-btn');
+    const closeButton = document.getElementById('modal-close-btn');
+
+    if (!overlay || !titleElement || !messageElement) return;
+
+    const winnerName = winnerColor === 0 ? "Białe" : "Czarne";
+
+    if (winnerColor === myColor) {
+        titleElement.innerText = "🎉 ZWYCIĘSTWO!";
+        titleElement.style.color = "#ffd700";
+        messageElement.innerHTML = `Wspaniała partia! Dowodzone przez Ciebie <b>${winnerName}</b> zmiażdżyły przeciwnika.`;
+    } else {
+        titleElement.innerText = "💀 KONIEC GRY";
+        titleElement.style.color = "#b53434";
+        messageElement.innerHTML = `Niestety, Twoje wojska poległy. Zwycięstwo zgarniają <b>${winnerName}</b>.`;
+    }
+
+    if (lobbyButton) {
+        lobbyButton.onclick = () => { hideGameOverModal(); switchView('lobby'); };
+    }
+    if (closeButton) {
+        closeButton.onclick = () => hideGameOverModal();
+    }
+    overlay.onclick = (e) => { if (e.target === overlay) hideGameOverModal(); };
+
+    setTimeout(() => { overlay.style.display = 'flex'; }, 400);
+}
+
 function handleGameState(payload: any) {
+    hidePromotionDropdown();
+
+    const state = payload.state;
+    const currentUserId = currentPlayer?.id;
+    myColor = (payload.white_id === currentUserId) ? 0 : 1;
+    currentBudget = state?.Budgets?.[myColor] ?? 0;
+
+    if (state && state.IsOver) {
+        console.log("Gra zakończona! Wyłoniono zwycięzcę.");
+
+        // Pobieramy ID lub kolor zwycięzcy
+        const winnerColor = state.Winner; // 0 = Biali, 1 = Czarni
+
+        // Odpalamy funkcję końca gry
+        handleGameOver(winnerColor);
+    }
+
     console.log("Otrzymano stan gry z Go:", payload);
     if (payload.game_id && payload.game_id !== activeGameId) return;
 
     const fields = payload.board?.fields;
     if (!fields || !Array.isArray(fields)) return;
-
-    const state = payload.state;
-    const currentUserId = currentPlayer?.id;
-    // Wyznaczamy nasz kolor w tej grze: 0 jeśli nasze ID to white_id, w przeciwnym wypadku 1
-    const myColor = (payload.white_id === currentUserId) ? 0 : 1;
     updatePlayerBanner(
         'bottom-player-banner',
         currentUserId!,
@@ -854,7 +939,8 @@ function handleGameState(payload: any) {
             const square = squares[index] as HTMLElement;
             if (!square) continue;
 
-            square.innerHTML = ''; // Czyszczenie pola
+            square.innerHTML = '';
+            delete square.dataset.promotable;
 
             const pieceData = fields[row][col];
             if (!pieceData) continue;
@@ -864,16 +950,23 @@ function handleGameState(payload: any) {
             pieceElement.className = `piece ${pieceColorClass}`;
             pieceElement.innerText = getPieceIcon(pieceData.type);
 
-            square.appendChild(pieceElement);// 🔥 BLOKADA: Podpinamy Drag & Drop tylko wtedy, gdy kolor figury należy do nas!
-            // pieceData.color musi być równy myColor (np. 0 === 0 dla białego)
+            square.appendChild(pieceElement);
+
             if (pieceData.color === myColor) {
-                setupPieceDragAndDrop(pieceElement, index);
+                const isPromotable = isMyTurn && state?.TurnStarted &&
+                    pieceData.type === 0 &&
+                    ((myColor === 0 && row === 0) || (myColor === 1 && row === 7));
+                if (isPromotable) {
+                    square.dataset.promotable = 'true';
+                } else {
+                    setupPieceDragAndDrop(pieceElement, index);
+                }
             } else {
-                // Opcjonalnie: możemy dodać klasę css, żeby gracz widział, że to nie jego figura
                 pieceElement.style.cursor = 'not-allowed';
             }
         }
     }
+
 }
 
 function updatePlayerBanner(bannerId: string, playerId: number, colorClass: 'white' | 'black', skill: number) {
@@ -908,7 +1001,6 @@ function getPieceIcon(type: number): string {
 function handleLegalMoves(payload: any) {// 1. Najpierw usuwamy wszelkie istniejące kropki, żeby wyczyścić planszę
     clearLegalMoves();
 
-    console.log("dupaLegalMoves");
     const moves = payload.moves;
     if (!moves || !Array.isArray(moves)) return;
 
@@ -968,6 +1060,79 @@ async function fetchActiveGames(): Promise<any[]> {
         console.error("Nie udało się pobrać listy moich gier:", error);
         return [];
     }
+}
+
+function showPromotionDropdown(squareIndex: number) {
+    // Remove any existing dropdown first
+    const existing = document.getElementById('promotion-dropdown');
+    if (existing) existing.remove();
+    document.removeEventListener('click', onPromotionOutsideClick, { capture: true } as EventListenerOptions);
+
+    promotionPawnIndex = squareIndex;
+
+    const squares = document.querySelectorAll('.square');
+    const square = squares[squareIndex] as HTMLElement;
+    if (!square) return;
+
+    const rect = square.getBoundingClientRect();
+    const iconClass = myColor === 0 ? 'white-piece' : 'black-piece';
+
+    const dropdown = document.createElement('div');
+    dropdown.id = 'promotion-dropdown';
+    dropdown.className = 'promotion-dropdown-popup';
+
+    PROMOTION_PIECES.forEach(p => {
+        const btn = document.createElement('button');
+        const canAfford = currentBudget >= p.cost;
+        btn.className = 'promotion-popup-btn' + (canAfford ? '' : ' unaffordable');
+        btn.innerHTML = `<span class="promo-icon ${iconClass}">${p.icon}</span><span class="promo-name">${p.name}</span><span class="promo-cost">${p.cost} pkt</span>`;
+        if (canAfford) {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                handlePromotionChoice(p.type);
+            });
+        }
+        dropdown.appendChild(btn);
+    });
+
+    document.body.appendChild(dropdown);
+
+    // Position below the square; flip above if too close to bottom
+    let top = rect.bottom + 4;
+    let left = rect.left;
+    if (top + 200 > window.innerHeight) top = rect.top - dropdown.offsetHeight - 4;
+    if (left + 180 > window.innerWidth) left = window.innerWidth - 184;
+    dropdown.style.top = `${top}px`;
+    dropdown.style.left = `${left}px`;
+
+    setTimeout(() => {
+        document.addEventListener('click', onPromotionOutsideClick, { capture: true } as EventListenerOptions);
+    }, 0);
+}
+
+function onPromotionOutsideClick(e: MouseEvent) {
+    const dropdown = document.getElementById('promotion-dropdown');
+    if (!dropdown || dropdown.contains(e.target as Node)) return;
+    document.removeEventListener('click', onPromotionOutsideClick, { capture: true } as EventListenerOptions);
+    hidePromotionDropdown();
+}
+
+function hidePromotionDropdown() {
+    const existing = document.getElementById('promotion-dropdown');
+    if (existing) existing.remove();
+    document.removeEventListener('click', onPromotionOutsideClick, { capture: true } as EventListenerOptions);
+    promotionPawnIndex = null;
+}
+
+function handlePromotionChoice(pieceType: number) {
+    if (promotionPawnIndex === null || !activeGameId) return;
+    const pawnIndex = promotionPawnIndex;
+    hidePromotionDropdown();
+    sendWSMessage('promote_pawn', {
+        game_id: activeGameId,
+        at: indexToCoords(pawnIndex),
+        promote_to: pieceType
+    });
 }
 
 // --- SYSTEM PRZEŁĄCZANIA WIDOKÓW (ROUTER) ---

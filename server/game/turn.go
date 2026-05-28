@@ -46,11 +46,17 @@ func (t *Turn) End() {
 		t.State.ColorToMove = White
 	}
 
+	/*if !t.hasAnyLegalMove() {
+		//!!!3PPA game over
+		if t.State.ColorToMove == White {
+			t.State.Winner = Black
+		}
+	}*/
+
 	t.State.TurnStarted = false
 }
 
 func (t *Turn) hasAnyLegalMove() bool {
-	//isKingInCheck := t.isKingInCheck()
 	for row := 0; row < BoardSize; row++ {
 		for col := 0; col < BoardSize; col++ {
 			c := Coordinates{Row: row, Col: col}
@@ -58,9 +64,6 @@ func (t *Turn) hasAnyLegalMove() bool {
 			if piece == nil || piece.Piece().Color != t.State.ColorToMove {
 				continue
 			}
-			/*if !t.State.HasBudgetFor(piece.Type(), isKingInCheck) {
-				continue
-			}*/
 			moves := piece.GetPossibleMoves(t.Board, c, t.State.EnPassant)
 			if len(moves) > 0 {
 				return true
@@ -80,6 +83,23 @@ func (t *Turn) CanAffordToMove() bool {
 				continue
 			}
 			if !t.State.HasBudgetFor(piece.Type(), isKingInCheck) {
+				continue
+			}
+			moves := piece.GetPossibleMoves(t.Board, c, t.State.EnPassant)
+			if len(moves) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (t *Turn) hasAnyLegalMoveForColor(color Color) bool {
+	for row := 0; row < BoardSize; row++ {
+		for col := 0; col < BoardSize; col++ {
+			c := Coordinates{Row: row, Col: col}
+			piece := t.Board.Get(c)
+			if piece == nil || piece.Piece().Color != color {
 				continue
 			}
 			moves := piece.GetPossibleMoves(t.Board, c, t.State.EnPassant)

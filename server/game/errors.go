@@ -12,4 +12,5 @@ var (
 	ErrInvalidPromotion   = errors.New("invalid promotion piece")
 	ErrNoPieceAtSource    = errors.New("no piece at source square")
 	ErrGameOver           = errors.New("game is already over")
+	ErrNotAPromotablePawn = errors.New("no promotable pawn at that square")
 )

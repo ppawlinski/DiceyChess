@@ -167,6 +167,8 @@ func (h *Hub) handleMessage(c *Client, msg Message) {
 		h.handleGetLegalMoves(c, msg.Payload)
 	case "make_move":
 		h.handleMakeMove(c, msg.Payload)
+	case "promote_pawn":
+		h.handlePromotePawn(c, msg.Payload)
 	case "end_turn":
 		h.handleEndTurn(c, msg.Payload)
 	case "join_game":
@@ -245,10 +247,9 @@ func (h *Hub) handleGetLegalMoves(c *Client, payload json.RawMessage) {
 
 func (h *Hub) handleMakeMove(c *Client, payload json.RawMessage) {
 	var req struct {
-		GameID    int64            `json:"game_id"`
-		From      game.Coordinates `json:"from"`
-		To        game.Coordinates `json:"to"`
-		PromoteTo *game.PieceType  `json:"promote_to"`
+		GameID int64            `json:"game_id"`
+		From   game.Coordinates `json:"from"`
+		To     game.Coordinates `json:"to"`
 	}
 	if err := json.Unmarshal(payload, &req); err != nil {
 		h.sendError(c, "invalid payload")
@@ -262,9 +263,8 @@ func (h *Hub) handleMakeMove(c *Client, payload json.RawMessage) {
 	}
 
 	err := g.MakeMove(game.MoveRequest{
-		From:      req.From,
-		To:        req.To,
-		PromoteTo: req.PromoteTo,
+		From: req.From,
+		To:   req.To,
 	})
 	if err != nil {
 		h.sendError(c, err.Error())
@@ -292,6 +292,58 @@ func (h *Hub) handleMakeMove(c *Client, payload json.RawMessage) {
 	}
 
 	// wyślij nowy stan obu graczom
+	h.broadcastGameState(req.GameID, g, "game_state")
+}
+
+func (h *Hub) handlePromotePawn(c *Client, payload json.RawMessage) {
+	var req struct {
+		GameID    int64            `json:"game_id"`
+		At        game.Coordinates `json:"at"`
+		PromoteTo game.PieceType   `json:"promote_to"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		h.sendError(c, "invalid payload")
+		return
+	}
+
+	g, ok := h.GameManager.Get(req.GameID)
+	if !ok {
+		h.sendError(c, "game not found")
+		return
+	}
+
+	currentPlayerID := g.WhiteID
+	if g.State.ColorToMove == game.Black {
+		currentPlayerID = g.BlackID
+	}
+	if c.PlayerID != currentPlayerID {
+		h.sendError(c, "not your turn")
+		return
+	}
+
+	if err := g.Promote(game.PromoteRequest{At: req.At, PromoteTo: req.PromoteTo}); err != nil {
+		h.sendError(c, err.Error())
+		return
+	}
+
+	state, err := g.Serialize()
+	if err == nil {
+		h.DB.UpdateGameState(req.GameID, state)
+	}
+
+	if g.State.IsOver {
+		result := "draw"
+		if g.State.Winner != nil {
+			if *g.State.Winner == game.White {
+				result = "white"
+			} else {
+				result = "black"
+			}
+		}
+		h.DB.FinishGame(req.GameID, result)
+		h.GameManager.Remove(req.GameID)
+	}
+
 	h.broadcastGameState(req.GameID, g, "game_state")
 }
 
