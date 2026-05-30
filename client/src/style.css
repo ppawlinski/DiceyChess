@@ -699,3 +699,147 @@ li {
 .promotion-popup-btn.unaffordable .promo-cost {
     color: #555;
 }
+
+/* Przycisk zasad */
+.rules-button {
+    background-color: transparent;
+    color: #bababa;
+    border: 1px solid #404040;
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.rules-button:hover {
+    background-color: #3a3a3a;
+    color: #ffffff;
+    border-color: #606060;
+}
+
+.rules-button:active {
+    transform: scale(0.98);
+}
+
+/* Legenda kosztów figur w widoku gry */
+.cost-legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    background-color: #262522;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #e0e0e0;
+    width: 100%;
+    box-sizing: border-box;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.cost-legend-title {
+    color: #797977;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 2px;
+}
+
+.cost-item {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    white-space: nowrap;
+    font-size: 14px;
+}
+
+.cost-value {
+    color: #ffd700;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+.cost-sep {
+    color: #444;
+    user-select: none;
+}
+
+/* Modal zasad gry */
+.rules-modal-content {
+    max-height: 80vh;
+    overflow-y: auto;
+    text-align: left;
+    max-width: 480px;
+    width: 90%;
+    padding: 24px 28px;
+}
+
+.rules-modal-content h2 {
+    text-align: center;
+    color: #ffd700;
+    margin-top: 0;
+    margin-bottom: 16px;
+    font-size: 20px;
+    letter-spacing: 1px;
+}
+
+.rules-modal-content h3 {
+    color: #e0e0e0;
+    margin: 16px 0 8px 0;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    border-bottom: 1px solid #3a3a3a;
+    padding-bottom: 4px;
+}
+
+.rules-body p {
+    font-size: 14px;
+    line-height: 1.5;
+    color: #bababa;
+    margin: 6px 0;
+}
+
+.rules-body ul {
+    margin: 4px 0;
+    padding-left: 18px;
+}
+
+.rules-body li {
+    background: none;
+    padding: 3px 0;
+    margin-bottom: 3px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #bababa;
+    border-radius: 0;
+    justify-content: flex-start;
+    display: list-item;
+    list-style: disc;
+    box-shadow: none;
+}
+
+.rules-cost-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 6px 0 4px 0;
+    font-size: 14px;
+}
+
+.rules-cost-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid #2e2e2e;
+    color: #bababa;
+}
+
+.rules-cost-table tr:last-child td {
+    border-bottom: none;
+}
+
+.rules-cost-table td:last-child {
+    text-align: right;
+    color: #ffd700;
+    font-weight: bold;
+}

@@ -264,7 +264,10 @@ async function initLobby() {
         <div class="screen">
             <div class="lobby-header">
                 <h3>Witaj w Lobby, <span id="lobby-username" style="color: #4caf50;">Gracz</span>!</h3>
-                <button id="logout-btn" class="logout-button">Wyloguj się 🚪</button>
+                <div style="display:flex;gap:8px;">
+                    <button onclick="showRulesModal()" class="rules-button">Zasady 📖</button>
+                    <button id="logout-btn" class="logout-button">Wyloguj się 🚪</button>
+                </div>
             </div>
             
             <div class="lobby-section">
@@ -418,6 +421,72 @@ async function handleChallengeClick(opponentId: number) {
 (window as any).handleChallengeClick = handleChallengeClick;
 (window as any).handleJoinClick = handleJoinClick;
 
+function showRulesModal() {
+    let overlay = document.getElementById('rules-modal-overlay') as HTMLElement | null;
+    if (overlay) { overlay.style.display = 'flex'; return; }
+
+    overlay = document.createElement('div');
+    overlay.id = 'rules-modal-overlay';
+    overlay.className = 'game-modal-overlay';
+    overlay.style.display = 'flex';
+    overlay.style.zIndex = '1000000';
+
+    overlay.innerHTML = `
+        <div class="game-modal-content rules-modal-content">
+            <button class="modal-close-btn" id="rules-close-btn">✕</button>
+            <h2>Zasady Gry 📖</h2>
+            <div class="rules-body">
+                <p>Przed rozpoczęciem gracze rzucają kostką — wyższy wynik gra <b>białymi</b>.</p>
+                <p>Rzut kostką ustala <b>środki</b> na daną turę.</p>
+
+                <h3>Koszt ruchu</h3>
+                <table class="rules-cost-table">
+                    <tr><td>♟ Pion</td><td>1 pkt</td></tr>
+                    <tr><td>♝ Goniec, ♞ Skoczek, ♚ Król</td><td>2 pkt</td></tr>
+                    <tr><td>♜ Wieża</td><td>3 pkt</td></tr>
+                    <tr><td>♛ Hetman</td><td>4 pkt</td></tr>
+                    <tr><td>Roszada</td><td>2 pkt</td></tr>
+                </table>
+
+                <h3>Przebieg tury</h3>
+                <ul>
+                    <li>Gracz <b>musi</b> wykonać co najmniej jeden ruch, jeśli ma na to środki.</li>
+                    <li>Po ruchu można zrezygnować z pozostałych środków — <b>nie przechodzą</b> do następnej tury.</li>
+                    <li>Brak środków na jakikolwiek legalny ruch → gracz traci turę, a środki przechodzą do jego kolejnej tury.</li>
+                    <li>Daną figurą można ruszać wielokrotnie w ramach środków, ale <b>maksymalnie do pierwszego bicia</b> tą figurą.</li>
+                    <li>Po zakończeniu tury sytuacja na planszy musi być inna niż na jej początku.</li>
+                </ul>
+
+                <h3>Szach i szach-mat</h3>
+                <ul>
+                    <li>Jeśli Twój król jest szachowany, musisz wyjść z szacha <b>pierwszym ruchem</b>. Brak wyjścia = szach-mat.</li>
+                    <li>Szachowany król kosztuje <b>1 pkt</b> (żeby zawsze można było wyjść z szacha po rzucie 1).</li>
+                    <li>Królem nie można poruszać się na pole, na którym byłby szachowany.</li>
+                </ul>
+
+                <h3>Promocja piona</h3>
+                <ul>
+                    <li>Ruch piona na ostatnie pole kosztuje standardowo <b>1 pkt</b>.</li>
+                    <li>Promocja wymaga środków na ruch figury, na którą pion jest promowany.</li>
+                </ul>
+
+                <p style="margin-top:16px;color:#797977;font-size:12px;">W sytuacjach nierozstrzygniętych powyższymi zasadami obowiązują standardowe zasady szachów.</p>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+    document.getElementById('rules-close-btn')!.addEventListener('click', hideRulesModal);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) hideRulesModal(); });
+}
+
+function hideRulesModal() {
+    const overlay = document.getElementById('rules-modal-overlay');
+    if (overlay) overlay.style.display = 'none';
+}
+
+(window as any).showRulesModal = showRulesModal;
+
 function joinGame(gameId: number) {
     console.log(`Próba dołączenia do gry o ID: ${gameId}`);
     activeGameId = gameId;
@@ -447,8 +516,25 @@ function initGame() {
                 <button id="roll-dice-btn" class="center-dice-btn">RZUĆ KOSTKĄ 🎲</button>
             </div>
             <div class="player-banner" id="bottom-player-banner"></div>
+            <div class="cost-legend">
+                <span class="cost-legend-title">Koszt:</span>
+                <span class="cost-item">♟ <span class="cost-value">1</span></span>
+                <span class="cost-sep">·</span>
+                <span class="cost-item">♝♞ <span class="cost-value">2</span></span>
+                <span class="cost-sep">·</span>
+                <span class="cost-item">♚ <span class="cost-value">2</span></span>
+                <span class="cost-sep">·</span>
+                <span class="cost-item">♜ <span class="cost-value">3</span></span>
+                <span class="cost-sep">·</span>
+                <span class="cost-item">♛ <span class="cost-value">4</span></span>
+                <span class="cost-sep">·</span>
+                <span class="cost-item">Roszada <span class="cost-value">2</span></span>
+            </div>
             <div><button id="end-turn-btn">Zakończ turę</button></div>
-            <div><button onclick="window.switchView('lobby')">Wyjdź do lobby</button></div>
+            <div style="display:flex;gap:8px;">
+                <button onclick="showRulesModal()" class="rules-button">Zasady 📖</button>
+                <button onclick="window.switchView('lobby')">Wyjdź do lobby</button>
+            </div>
         </div>
     `;
 
