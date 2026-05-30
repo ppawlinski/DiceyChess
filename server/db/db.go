@@ -179,6 +179,11 @@ func (d *DB) UpdateGameState(id int64, state string) error {
 	return err
 }
 
+func (d *DB) UpdateGame(id int64, state, pgn string) error {
+	_, err := d.conn.Exec(`UPDATE games SET state = ?, pgn = ? WHERE id = ?`, state, pgn, id)
+	return err
+}
+
 func (d *DB) FinishGame(id int64, result string) error {
 	_, err := d.conn.Exec(`
 		UPDATE games SET status = 'finished', result = ?, finished_at = CURRENT_TIMESTAMP

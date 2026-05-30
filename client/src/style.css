@@ -700,6 +700,177 @@ li {
     color: #555;
 }
 
+/* Wiersz nawigacji ruchów (stałe strzałki w widoku gry) */
+.move-nav-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    background-color: #262522;
+    border-radius: 4px;
+    width: 100%;
+    box-sizing: border-box;
+    justify-content: center;
+}
+
+.nav-arrow-btn {
+    background-color: #2a2a2a;
+    color: #bababa;
+    border: 1px solid #404040;
+    padding: 5px 14px;
+    font-size: 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+    line-height: 1;
+}
+
+.nav-arrow-btn:hover:not(:disabled) {
+    background-color: #3a3a3a;
+    color: #ffffff;
+}
+
+.nav-arrow-btn:disabled {
+    opacity: 0.28;
+    cursor: not-allowed;
+}
+
+.nav-pos {
+    font-size: 12px;
+    color: #797977;
+    min-width: 48px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Panel historii ruchów */
+.history-overlay {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 500000;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.history-panel {
+    pointer-events: all;
+    background-color: #1e1c1a;
+    border: 1px solid #3a3a3a;
+    border-bottom: none;
+    border-radius: 10px 10px 0 0;
+    width: min(500px, 100vw);
+    max-height: 42vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.6);
+    animation: slideUpPanel 0.2s ease-out;
+}
+
+@keyframes slideUpPanel {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 14px;
+    border-bottom: 1px solid #3a3a3a;
+    flex-shrink: 0;
+}
+
+.history-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #bababa;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+}
+
+.history-move-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.hist-halfturn-header {
+    font-size: 11px;
+    color: #797977;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 4px 2px;
+    margin-top: 4px;
+}
+
+.hist-move-btn {
+    background: none;
+    border: none;
+    color: #bababa;
+    font-size: 13px;
+    font-family: monospace;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    transition: background-color 0.1s;
+}
+
+.hist-move-btn:hover {
+    background-color: #2a2a2a;
+    color: #ffffff;
+}
+
+.hist-move-btn.hist-move-active {
+    background-color: #b53434;
+    color: #ffffff;
+    font-weight: bold;
+}
+
+.history-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid #3a3a3a;
+    flex-shrink: 0;
+}
+
+.hist-nav-btn {
+    background-color: #2a2a2a;
+    color: #bababa;
+    border: 1px solid #404040;
+    padding: 6px 14px;
+    font-size: 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+
+.hist-nav-btn:hover:not(:disabled) {
+    background-color: #3a3a3a;
+    color: #ffffff;
+}
+
+.hist-nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.hist-pos {
+    flex: 1;
+    text-align: center;
+    font-size: 13px;
+    color: #797977;
+}
+
 /* Przycisk zasad */
 .rules-button {
     background-color: transparent;

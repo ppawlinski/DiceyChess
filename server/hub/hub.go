@@ -175,6 +175,8 @@ func (h *Hub) handleMessage(c *Client, msg Message) {
 		h.handleJoinGame(c, msg.Payload)
 	case "roll_dice":
 		h.handleRollDice(c, msg.Payload)
+	case "get_history":
+		h.handleGetHistory(c, msg.Payload)
 	}
 }
 
@@ -209,8 +211,8 @@ func (h *Hub) handleRollDice(c *Client, payload json.RawMessage) {
 
 	g.StartTurn()
 
-	state, _ := g.Serialize()
-	h.DB.UpdateGameState(req.GameID, state)
+	state, pgn, _ := g.SerializeForDB()
+	h.DB.UpdateGame(req.GameID, state, pgn)
 
 	h.broadcastGameState(req.GameID, g, "dice_roll")
 }
@@ -272,9 +274,9 @@ func (h *Hub) handleMakeMove(c *Client, payload json.RawMessage) {
 	}
 
 	// zapisz stan do bazy
-	state, err := g.Serialize()
+	state, pgn, err := g.SerializeForDB()
 	if err == nil {
-		h.DB.UpdateGameState(req.GameID, state)
+		h.DB.UpdateGame(req.GameID, state, pgn)
 	}
 
 	// jeśli gra skończona
@@ -326,9 +328,9 @@ func (h *Hub) handlePromotePawn(c *Client, payload json.RawMessage) {
 		return
 	}
 
-	state, err := g.Serialize()
+	state, pgn, err := g.SerializeForDB()
 	if err == nil {
-		h.DB.UpdateGameState(req.GameID, state)
+		h.DB.UpdateGame(req.GameID, state, pgn)
 	}
 
 	if g.State.IsOver {
@@ -382,10 +384,32 @@ func (h *Hub) handleEndTurn(c *Client, payload json.RawMessage) {
 		return
 	}
 
-	state, _ := g.Serialize()
-	h.DB.UpdateGameState(req.GameID, state)
+	state, pgn, _ := g.SerializeForDB()
+	h.DB.UpdateGame(req.GameID, state, pgn)
 
 	h.broadcastGameState(req.GameID, g, "game_state")
+}
+
+func (h *Hub) handleGetHistory(c *Client, rawPayload json.RawMessage) {
+	var req struct {
+		GameID int64 `json:"game_id"`
+	}
+	if err := json.Unmarshal(rawPayload, &req); err != nil {
+		h.sendError(c, "invalid payload")
+		return
+	}
+
+	g, ok := h.GameManager.Get(req.GameID)
+	if !ok {
+		h.sendError(c, "game not found")
+		return
+	}
+
+	responsePayload, _ := json.Marshal(map[string]any{
+		"game_id": req.GameID,
+		"turns":   g.History,
+	})
+	c.send <- Message{Type: "history", Payload: responsePayload}
 }
 
 func (h *Hub) handleJoinGame(c *Client, payload json.RawMessage) {

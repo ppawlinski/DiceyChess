@@ -24,6 +24,17 @@ let myColor: number | null = null;
 let promotionPawnIndex: number | null = null;
 let currentBudget: number = 0;
 
+// --- HISTORIA ---
+interface HistoryMoveRecord { notation: string; board: string; }
+interface HalfTurn { num: number; color: number; roll: number; moves: HistoryMoveRecord[]; }
+let historyData: HalfTurn[] = [];
+let historyFlatMoves: Array<{ htIdx: number; mIdx: number; label: string; board: string }> = [];
+let historyCurrentIdx: number = -1;
+let isHistoryMode: boolean = false;
+let lastGameStatePayload: any = null;
+let openHistoryPanelOnLoad = false;
+let pendingNavAction: 'prev' | null = null;
+
 const PROMOTION_PIECES = [
     { type: 4, icon: '♛', name: 'Hetman', cost: 4 },
     { type: 3, icon: '♜', name: 'Wieża', cost: 3 },
@@ -227,6 +238,9 @@ function initWebSocket() {
                         }
                         setTimeout(() => { handleGameState(message.payload); }, 1000);
                     }
+                    break;
+                case 'history':
+                    handleHistory(message.payload);
                     break;
                 case 'error':
                     showSnackbar(message.payload.error ?? 'Nieznany błąd serwera');
@@ -531,7 +545,14 @@ function initGame() {
                 <span class="cost-item">Roszada <span class="cost-value">2</span></span>
             </div>
             <div><button id="end-turn-btn">Zakończ turę</button></div>
+            <div class="move-nav-row" id="move-nav-row">
+                <button id="nav-prev" class="nav-arrow-btn" onclick="navHistoryPrev()">◀</button>
+                <span id="nav-pos" class="nav-pos">—</span>
+                <button id="nav-next" class="nav-arrow-btn" onclick="navHistoryNext()">▶</button>
+                <button id="nav-latest" class="nav-arrow-btn" onclick="navHistoryLatest()" title="Aktualny ruch">▶|</button>
+            </div>
             <div style="display:flex;gap:8px;">
+                <button id="history-btn" onclick="openHistory()" class="rules-button">Ruchy 📜</button>
                 <button onclick="showRulesModal()" class="rules-button">Zasady 📖</button>
                 <button onclick="window.switchView('lobby')">Wyjdź do lobby</button>
             </div>
@@ -936,6 +957,8 @@ function handleGameOver(winnerColor: number) {
 }
 
 function handleGameState(payload: any) {
+    lastGameStatePayload = payload;
+    if (isHistoryMode) return; // nie nadpisuj planszy w trybie historii
     hidePromotionDropdown();
 
     const state = payload.state;
@@ -1243,6 +1266,210 @@ function handlePromotionChoice(pieceType: number) {
         promote_to: pieceType
     });
 }
+
+// --- HISTORIA RUCHÓW ---
+
+function openHistory() {
+    openHistoryPanelOnLoad = true;
+    if (!activeGameId || !socket || socket.readyState !== WebSocket.OPEN) return;
+    sendWSMessage('get_history', { game_id: activeGameId });
+}
+
+function handleHistory(payload: any) {
+    historyData = payload.turns || [];
+    historyFlatMoves = [];
+    historyData.forEach((ht, htIdx) => {
+        ht.moves.forEach((m) => {
+            const fi = historyFlatMoves.length;
+            historyFlatMoves.push({ htIdx, mIdx: fi, label: m.notation, board: m.board });
+        });
+    });
+
+    if (openHistoryPanelOnLoad) {
+        openHistoryPanelOnLoad = false;
+        historyCurrentIdx = historyFlatMoves.length > 0 ? historyFlatMoves.length - 1 : -1;
+        isHistoryMode = historyFlatMoves.length > 0;
+        if (isHistoryMode) renderHistoryBoard(historyFlatMoves[historyCurrentIdx].board);
+        showHistoryOverlay();
+        updateNavUI();
+        return;
+    }
+
+    if (pendingNavAction === 'prev') {
+        pendingNavAction = null;
+        navHistoryPrev();
+        return;
+    }
+
+    updateNavUI();
+}
+
+function navHistoryPrev() {
+    if (historyFlatMoves.length === 0) {
+        pendingNavAction = 'prev';
+        if (activeGameId && socket && socket.readyState === WebSocket.OPEN)
+            sendWSMessage('get_history', { game_id: activeGameId });
+        return;
+    }
+    const next = isHistoryMode ? historyCurrentIdx - 1 : historyFlatMoves.length - 1;
+    if (next < 0) return;
+    historyCurrentIdx = next;
+    isHistoryMode = true;
+    renderHistoryBoard(historyFlatMoves[historyCurrentIdx].board);
+    updateNavUI();
+    updateHistoryPanelSelection();
+}
+
+function navHistoryNext() {
+    if (!isHistoryMode || historyFlatMoves.length === 0) return;
+    const next = historyCurrentIdx + 1;
+    if (next >= historyFlatMoves.length) {
+        navHistoryLatest();
+    } else {
+        historyCurrentIdx = next;
+        renderHistoryBoard(historyFlatMoves[historyCurrentIdx].board);
+        updateNavUI();
+        updateHistoryPanelSelection();
+    }
+}
+
+function navHistoryLatest() {
+    isHistoryMode = false;
+    document.getElementById('history-overlay')?.remove();
+    if (lastGameStatePayload) handleGameState(lastGameStatePayload);
+    updateNavUI();
+}
+
+function updateNavUI() {
+    const prevBtn  = document.getElementById('nav-prev')   as HTMLButtonElement | null;
+    const nextBtn  = document.getElementById('nav-next')   as HTMLButtonElement | null;
+    const latestBtn = document.getElementById('nav-latest') as HTMLButtonElement | null;
+    const posEl    = document.getElementById('nav-pos');
+    if (!prevBtn || !nextBtn || !latestBtn || !posEl) return;
+
+    const total = historyFlatMoves.length;
+    if (isHistoryMode && total > 0) {
+        posEl.textContent = `${historyCurrentIdx + 1}/${total}`;
+        prevBtn.disabled  = historyCurrentIdx <= 0;
+        nextBtn.disabled  = false;
+        latestBtn.disabled = false;
+    } else {
+        posEl.textContent = total > 0 ? `${total}/${total}` : '—';
+        prevBtn.disabled  = total === 0;
+        nextBtn.disabled  = true;
+        latestBtn.disabled = true;
+    }
+}
+
+function updateHistoryPanelSelection() {
+    const list = document.getElementById('history-move-list');
+    if (!list) return;
+    const total = historyFlatMoves.length;
+    list.querySelectorAll<HTMLElement>('.hist-move-btn').forEach((btn, i) => {
+        btn.classList.toggle('hist-move-active', i === historyCurrentIdx);
+    });
+    const prev = document.getElementById('hist-prev') as HTMLButtonElement | null;
+    const next = document.getElementById('hist-next') as HTMLButtonElement | null;
+    const pos  = document.querySelector<HTMLElement>('.hist-pos');
+    if (prev) prev.disabled = historyCurrentIdx <= 0;
+    if (next) next.disabled = historyCurrentIdx >= total - 1;
+    if (pos)  pos.textContent = `${historyCurrentIdx + 1} / ${total}`;
+    setTimeout(() => document.querySelector('.hist-move-active')?.scrollIntoView({ block: 'nearest' }), 0);
+}
+
+function showHistoryOverlay() {
+    document.getElementById('history-overlay')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'history-overlay';
+    overlay.className = 'history-overlay';
+
+    const total = historyFlatMoves.length;
+    const cur = historyCurrentIdx;
+
+    let listHTML = '';
+    let flatIdx = 0;
+    historyData.forEach((ht) => {
+        const colorLabel = ht.color === 0 ? '⬜' : '⬛';
+        listHTML += `<div class="hist-halfturn-header">${ht.num}. ${colorLabel} [🎲${ht.roll}]</div>`;
+        ht.moves.forEach((m) => {
+            const fi = flatIdx;
+            const isActive = fi === cur ? ' hist-move-active' : '';
+            listHTML += `<button class="hist-move-btn${isActive}" data-fidx="${fi}">${m.notation}</button>`;
+            flatIdx++;
+        });
+    });
+
+    overlay.innerHTML = `
+        <div class="history-panel">
+            <div class="history-header">
+                <span class="history-title">Ruchy</span>
+                <button class="modal-close-btn" id="history-close-btn">✕</button>
+            </div>
+            <div class="history-move-list" id="history-move-list">${listHTML || '<span style="color:#797977;font-size:13px;">Brak ruchów</span>'}</div>
+            <div class="history-nav">
+                <button id="hist-prev" class="hist-nav-btn" ${cur <= 0 ? 'disabled' : ''}>◀</button>
+                <span class="hist-pos">${total > 0 ? cur + 1 : 0} / ${total}</span>
+                <button id="hist-next" class="hist-nav-btn" ${cur >= total - 1 ? 'disabled' : ''}>▶</button>
+                <button id="hist-exit-btn" class="rules-button" style="margin-left:8px;">Zamknij</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    document.getElementById('history-close-btn')!.addEventListener('click', navHistoryLatest);
+    document.getElementById('hist-exit-btn')!.addEventListener('click', navHistoryLatest);
+
+    document.getElementById('hist-prev')?.addEventListener('click', () => {
+        navHistoryPrev();
+    });
+    document.getElementById('hist-next')?.addEventListener('click', () => {
+        navHistoryNext();
+    });
+
+    document.getElementById('history-move-list')?.querySelectorAll('.hist-move-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const fi = parseInt((btn as HTMLElement).dataset.fidx!);
+            historyCurrentIdx = fi;
+            isHistoryMode = true;
+            renderHistoryBoard(historyFlatMoves[fi].board);
+            updateNavUI();
+            updateHistoryPanelSelection();
+        });
+    });
+
+    setTimeout(() => document.querySelector('.hist-move-active')?.scrollIntoView({ block: 'nearest' }), 0);
+}
+
+function renderHistoryBoard(boardJSON: string) {
+    try {
+        const boardData = JSON.parse(boardJSON);
+        const fields: any[][] = boardData.fields;
+        const squares = document.querySelectorAll('.square');
+        for (let row = 0; row < 8; row++) {
+            for (let col = 0; col < 8; col++) {
+                const index = row * 8 + col;
+                const square = squares[index] as HTMLElement;
+                if (!square) continue;
+                square.innerHTML = '';
+                const pieceData = fields[row][col];
+                if (!pieceData) continue;
+                const pieceElement = document.createElement('div');
+                pieceElement.className = `piece ${pieceData.color === 0 ? 'white' : 'black'}`;
+                pieceElement.innerText = getPieceIcon(pieceData.type);
+                square.appendChild(pieceElement);
+            }
+        }
+    } catch (e) {
+        console.error('Błąd renderowania historycznej planszy:', e);
+    }
+}
+
+(window as any).openHistory = openHistory;
+(window as any).navHistoryPrev = navHistoryPrev;
+(window as any).navHistoryNext = navHistoryNext;
+(window as any).navHistoryLatest = navHistoryLatest;
 
 // --- SYSTEM PRZEŁĄCZANIA WIDOKÓW (ROUTER) ---
 export function switchView(viewName: 'login' | 'lobby' | 'game') {

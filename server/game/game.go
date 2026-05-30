@@ -1,5 +1,7 @@
 package game
 
+import "strings"
+
 type Game struct {
 	Board   *Board
 	State   *GameState
@@ -7,6 +9,8 @@ type Game struct {
 	turn    *Turn
 	WhiteID int64
 	BlackID int64
+	History History
+	TurnNum int // pair number, increments when White starts
 }
 
 func NewGame(seed int64) *Game {
@@ -17,10 +21,12 @@ func NewGame(seed int64) *Game {
 	turn := NewTurn(state, board, dice)
 
 	return &Game{
-		Board: board,
-		State: state,
-		Dice:  dice,
-		turn:  turn,
+		Board:   board,
+		State:   state,
+		Dice:    dice,
+		turn:    turn,
+		History: History{},
+		TurnNum: 0,
 	}
 }
 
@@ -35,7 +41,42 @@ type PromoteRequest struct {
 }
 
 func (g *Game) StartTurn() {
+	if g.State.ColorToMove == White {
+		g.TurnNum++
+	}
 	g.turn.Start()
+	g.History = append(g.History, HalfTurn{
+		Num:   g.TurnNum,
+		Color: g.State.ColorToMove,
+		Roll:  g.State.LastRoll,
+		Moves: []MoveRecord{},
+	})
+}
+
+func (g *Game) recordMoveToHistory(notation, boardJSON string) {
+	if len(g.History) == 0 {
+		return
+	}
+	last := &g.History[len(g.History)-1]
+	last.Moves = append(last.Moves, MoveRecord{
+		Notation:  notation,
+		BoardJSON: boardJSON,
+	})
+}
+
+func (g *Game) updateLastNotationForCheckmate() {
+	for i := len(g.History) - 1; i >= 0; i-- {
+		ht := &g.History[i]
+		for j := len(ht.Moves) - 1; j >= 0; j-- {
+			m := &ht.Moves[j]
+			if strings.HasSuffix(m.Notation, "+") {
+				m.Notation = strings.TrimSuffix(m.Notation, "+") + "#"
+			} else if !strings.HasSuffix(m.Notation, "#") {
+				m.Notation += "#"
+			}
+			return
+		}
+	}
 }
 
 func (g *Game) GetLegalMoves(from Coordinates) ([]Coordinates, error) {
@@ -115,6 +156,10 @@ func (g *Game) MakeMove(req MoveRequest) error {
 		}
 	}
 
+	// wykryj bicie przed wykonaniem ruchu
+	isCapture := g.Board.Get(req.To) != nil ||
+		(piece.Type() == PawnType && req.To.Equals(g.State.EnPassant))
+
 	// wykonaj ruch
 	captured := g.Board.Get(req.To)
 	if captured != nil {
@@ -157,6 +202,15 @@ func (g *Game) MakeMove(req MoveRequest) error {
 	piece.Move(req.To)
 	g.Board.Remove(req.From)
 	g.Board.Set(req.To, piece)
+
+	// nagraj ruch w historii
+	opponent := Black
+	if piece.Piece().Color == Black {
+		opponent = White
+	}
+	opponentInCheck := KingInCheck(g.Board, opponent)
+	notation := MoveToAlgebraic(piece.Type(), req.From, req.To, isCapture, opponentInCheck, false)
+	g.recordMoveToHistory(notation, boardToJSON(g.Board))
 
 	g.State.SpendBudget(piece.Type(), isInCheck)
 	if g.State.Budgets[g.State.ColorToMove] == 0 {
@@ -211,6 +265,7 @@ func (g *Game) EndTurn() error {
 				winner = Black
 			}
 			g.State.Winner = &winner
+			g.updateLastNotationForCheckmate()
 		}
 		// pat - Winner zostaje nil
 	}
@@ -241,6 +296,18 @@ func (g *Game) Promote(req PromoteRequest) error {
 
 	g.State.SpendBudget(req.PromoteTo, false)
 	HandlePromotion(g.Board, req.At, piece.Piece().Color, req.PromoteTo)
+
+	// nagraj promocję jako osobny ruch w bieżącej turze
+	opp := Black
+	if g.State.ColorToMove == Black {
+		opp = White
+	}
+	opponentInCheck := KingInCheck(g.Board, opp)
+	promoNotation := string([]byte{
+		byte('a' + req.At.Col),
+		byte('0' + (8 - req.At.Row)),
+	}) + PromotionSuffix(req.PromoteTo) + checkSuffix(opponentInCheck, false)
+	g.recordMoveToHistory(promoNotation, boardToJSON(g.Board))
 
 	if g.State.Budgets[g.State.ColorToMove] == 0 {
 		g.EndTurn()
