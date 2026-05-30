@@ -21,7 +21,7 @@ func (t *Turn) Start() {
 	t.State.Budgets[t.State.ColorToMove] = roll + leftover
 	t.State.TurnStarted = true
 	t.State.CapturedThisTurn = make(map[Coordinates]bool)
-	t.State.EnPassant = InvalidCoordinates
+	t.State.TurnStartBoardHash = t.Board.Hash()
 }
 
 func (t *Turn) CanAffordAnyMove(moves []Coordinates, piece Movable) bool {
@@ -74,19 +74,22 @@ func (t *Turn) hasAnyLegalMove() bool {
 }
 
 func (t *Turn) CanAffordToMove() bool {
-	isKingInCheck := t.isKingInCheck()
+	return t.HasAnyAffordableMoveForColor(t.State.Budgets[t.State.ColorToMove], t.State.ColorToMove)
+}
+
+func (t *Turn) HasAnyAffordableMoveForColor(budget int, color Color) bool {
+	isKingInCheck := KingInCheck(t.Board, color)
 	for row := 0; row < BoardSize; row++ {
 		for col := 0; col < BoardSize; col++ {
 			c := Coordinates{Row: row, Col: col}
 			piece := t.Board.Get(c)
-			if piece == nil || piece.Piece().Color != t.State.ColorToMove {
+			if piece == nil || piece.Piece().Color != color {
 				continue
 			}
-			if !t.State.HasBudgetFor(piece.Type(), isKingInCheck) {
+			if budget < EffectiveCost(piece.Type(), isKingInCheck) {
 				continue
 			}
-			moves := piece.GetPossibleMoves(t.Board, c, t.State.EnPassant)
-			if len(moves) > 0 {
+			if len(piece.GetPossibleMoves(t.Board, c, t.State.EnPassant)) > 0 {
 				return true
 			}
 		}

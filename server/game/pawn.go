@@ -32,7 +32,10 @@ func GetPawnMoves(b *Board, from Coordinates, color Color, enPassant Coordinates
 		}
 		// en passant - enPassant to pole docelowe (za pionkiem przeciwnika)
 		if target.Equals(enPassant) {
-			moves = append(moves, target)
+			capturedSq := Coordinates{Row: target.Row - direction, Col: target.Col}
+			if b.HasEnemy(capturedSq, color) {
+				moves = append(moves, target)
+			}
 		}
 	}
 

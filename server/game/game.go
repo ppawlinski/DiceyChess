@@ -69,6 +69,10 @@ func (g *Game) MakeMove(req MoveRequest) error {
 		return ErrNotYourTurn
 	}
 
+	if g.State.CapturedThisTurn[req.From] {
+		return ErrAlreadyCaptured
+	}
+
 	isInCheck := KingInCheck(g.Board, g.State.ColorToMove)
 
 	// pierwszy ruch gdy król musi wyjść z szacha
@@ -103,6 +107,14 @@ func (g *Game) MakeMove(req MoveRequest) error {
 		return ErrInsufficientBudget
 	}
 
+	// zablokuj ruch który cofałby planszę do stanu sprzed tury, gdy gracz mógłby jeszcze zagrać
+	if g.State.TurnStartBoardHash != "" && g.simulateMoveHash(req) == g.State.TurnStartBoardHash {
+		projectedBudget := g.State.Budgets[g.State.ColorToMove] - EffectiveCost(piece.Type(), isInCheck)
+		if g.turn.HasAnyAffordableMoveForColor(projectedBudget, piece.Piece().Color) {
+			return ErrWouldRevertBoard
+		}
+	}
+
 	// wykonaj ruch
 	captured := g.Board.Get(req.To)
 	if captured != nil {
@@ -116,6 +128,7 @@ func (g *Game) MakeMove(req MoveRequest) error {
 			direction = -1
 		}
 		g.Board.Remove(Coordinates{Row: req.To.Row - direction, Col: req.To.Col})
+		g.State.CapturedThisTurn[req.To] = true
 	}
 
 	// roszada - przesuń wieżę
@@ -153,8 +166,40 @@ func (g *Game) MakeMove(req MoveRequest) error {
 	return nil
 }
 
+func (g *Game) simulateMoveHash(req MoveRequest) string {
+	clone := g.Board.Clone()
+	piece := clone.Get(req.From)
+	if piece == nil {
+		return ""
+	}
+	if piece.Type() == PawnType && req.To.Equals(g.State.EnPassant) {
+		direction := 1
+		if piece.Piece().Color == White {
+			direction = -1
+		}
+		clone.Remove(Coordinates{Row: req.To.Row - direction, Col: req.To.Col})
+	}
+	if piece.Type() == KingType && abs(req.To.Col-req.From.Col) == 2 {
+		rookFromCol := BoardSize - 1
+		rookToCol := req.From.Col + 1
+		if req.To.Col < req.From.Col {
+			rookFromCol = 0
+			rookToCol = req.From.Col - 1
+		}
+		rook := clone.Get(Coordinates{Row: req.From.Row, Col: rookFromCol})
+		clone.Remove(Coordinates{Row: req.From.Row, Col: rookFromCol})
+		clone.Set(Coordinates{Row: req.From.Row, Col: rookToCol}, rook)
+	}
+	clone.Remove(req.From)
+	clone.Set(req.To, piece)
+	return clone.Hash()
+}
+
+func (g *Game) CanAffordToMove() bool {
+	return g.turn.CanAffordToMove()
+}
+
 func (g *Game) EndTurn() error {
-	//!!!3PPA todo compare initial copy of the board with current to chec k if state changed
 	g.turn.End()
 	// sprawdź mat/pat dla następnego gracza
 	opponent := g.State.ColorToMove // po End() to już następny gracz

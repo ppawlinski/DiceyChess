@@ -12,6 +12,10 @@ let activeGames: any[] = []; // Tablica na trwające gry gracza
 let allPlayers: any[] = []; // Pełna baza graczy z REST (id + name)
 let onlinePlayerIds: number[] = []; // Identyfikatory graczy online z WebSocketa
 let diceAnimationInterval: number | null = null;
+let snackbarTimeout: number | null = null;
+let diceAnimElementId: string = 'bottom-dice';
+let bottomDiceValue: number = 1;
+let topDiceValue: number = 1;
 let currentLegalMoves: number[] = [];
 let selectedSquareIndex: number | null = null;
 let isMyTurn: boolean = false;
@@ -21,9 +25,9 @@ let promotionPawnIndex: number | null = null;
 let currentBudget: number = 0;
 
 const PROMOTION_PIECES = [
-    { type: 4, icon: '♛', name: 'Hetman',  cost: 4 },
-    { type: 3, icon: '♜', name: 'Wieża',   cost: 3 },
-    { type: 1, icon: '♝', name: 'Goniec',  cost: 2 },
+    { type: 4, icon: '♛', name: 'Hetman', cost: 4 },
+    { type: 3, icon: '♜', name: 'Wieża', cost: 3 },
+    { type: 1, icon: '♝', name: 'Goniec', cost: 2 },
     { type: 2, icon: '♞', name: 'Skoczek', cost: 2 },
 ];
 // --- 1. WIDOK LOGOWANIA ---
@@ -208,15 +212,24 @@ function initWebSocket() {
                     break;
                 case "dice_roll":
                     if (resolveDiceResponse) {
-                        // Przekazujemy dane z serwera do oczekującego Promise.all
                         resolveDiceResponse(message.payload);
-                        resolveDiceResponse = null; // Czyszczenie
+                        resolveDiceResponse = null;
                     } else {
-                        handleGameState(message.payload);
+                        // Rzut przeciwnika — animujemy jego kostkę, potem aktualizujemy stan
+                        const topDice = document.getElementById('top-dice');
+                        if (topDice) {
+                            topDice.classList.add('shaking');
+                            diceAnimElementId = 'top-dice';
+                            if (diceAnimationInterval) clearInterval(diceAnimationInterval);
+                            diceAnimationInterval = window.setInterval(() => {
+                                renderDiceDotsTo('top-dice', Math.floor(Math.random() * 6) + 1);
+                            }, 70);
+                        }
+                        setTimeout(() => { handleGameState(message.payload); }, 1000);
                     }
                     break;
                 case 'error':
-                    console.log(`Błąd serwera (WS): ${message.payload.error}`);
+                    showSnackbar(message.payload.error ?? 'Nieznany błąd serwera');
                     break;
                 default:
                     console.warn("Nienany typ wiadomości:", message.type);
@@ -427,10 +440,7 @@ function joinGame(gameId: number) {
 function initGame() {
     app.innerHTML = `
         <div class="game-container">
-            <div class="dice-section">
-                <span id="game-turn-info">Ładowanie...</span>
-                <div class="dice" id="dice-element"></div>
-            </div>
+            <span id="game-turn-info">Ładowanie...</span>
             <div class="player-banner" id="top-player-banner"></div>
             <div class="board-wrapper">
                 <div class="chessboard" id="board"></div>
@@ -476,25 +486,17 @@ function initGame() {
     const rollBtn = document.getElementById('roll-dice-btn') as HTMLButtonElement;
 
 
-    renderDiceDots(1);
-
     rollBtn.addEventListener('click', () => {
-        const diceElement = document.getElementById('dice-element')!;
-        // 1. Blokujemy przycisk, żeby uniknąć spamu
+        const bottomDice = document.getElementById('bottom-dice')!;
         rollBtn.disabled = true;
+        bottomDice.classList.add('shaking');
+        diceAnimElementId = 'bottom-dice';
 
-        // 2. Odpalamy efekt wizualny trzęsienia
-        diceElement.classList.add('shaking');
-
-        // 3. Uruchamiamy losowe miganie oczek w locie
         if (diceAnimationInterval) clearInterval(diceAnimationInterval);
-
         diceAnimationInterval = window.setInterval(() => {
-            const randomFakeValue = Math.floor(Math.random() * 6) + 1;
-            renderDiceDots(randomFakeValue);
+            renderDiceDotsTo('bottom-dice', Math.floor(Math.random() * 6) + 1);
         }, 70);
 
-        // 4. Strzelamy do serwera – to stamtąd przyjdzie prawdziwy wynik
         handleRollDice();
     });
 }
@@ -533,15 +535,16 @@ function handleSquareClick(clickedIndex: number) {
     }
 }
 
-function renderDiceDots(value: number) {
-    const diceElement = document.getElementById('dice-element')!;
+function renderDiceDotsTo(id: string, value: number) {
+    if (id === 'bottom-dice') bottomDiceValue = value;
+    if (id === 'top-dice') topDiceValue = value;
+    const el = document.getElementById(id);
+    if (!el) return;
     const dotPositions: { [key: number]: number[] } = {
         1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8]
     };
-    if (value === 0) {
-        value = 1;
-    }
-    diceElement.innerHTML = '';
+    if (value === 0) value = 1;
+    el.innerHTML = '';
     for (let i = 0; i < 9; i++) {
         const cell = document.createElement('div');
         if (dotPositions[value].includes(i)) {
@@ -549,8 +552,28 @@ function renderDiceDots(value: number) {
             dot.classList.add('dot');
             cell.appendChild(dot);
         }
-        diceElement.appendChild(cell);
+        el.appendChild(cell);
     }
+}
+
+function showSnackbar(message: string, type: 'error' | 'info' | 'success' = 'error') {
+    let el = document.getElementById('snackbar') as HTMLElement | null;
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'snackbar';
+        el.className = 'snackbar';
+        document.body.appendChild(el);
+    }
+    el.classList.remove('visible', 'error', 'info', 'success');
+    el.textContent = message;
+    el.classList.add(type);
+    void (el as HTMLElement).offsetHeight; // reflow żeby animacja startowała od nowa
+    el.classList.add('visible');
+    if (snackbarTimeout) clearTimeout(snackbarTimeout);
+    snackbarTimeout = window.setTimeout(() => {
+        el!.classList.remove('visible');
+        snackbarTimeout = null;
+    }, 3000);
 }
 
 function handleEndTurn() {
@@ -853,14 +876,18 @@ function handleGameState(payload: any) {
         'bottom-player-banner',
         currentUserId!,
         myColor ? 'black' : 'white',
-        state.Budgets[myColor]
+        state.Budgets[myColor],
+        'bottom-dice'
     );
     updatePlayerBanner(
         'top-player-banner',
         myColor ? payload.white_id : payload.black_id,
         myColor ? 'white' : 'black',
-        state.Budgets[myColor ? 0 : 1]
+        state.Budgets[myColor ? 0 : 1],
+        'top-dice'
     );
+    renderDiceDotsTo('bottom-dice', bottomDiceValue);
+    renderDiceDotsTo('top-dice', topDiceValue);
     // Obracamy planszę dla czarnego gracza
     const boardElement = document.getElementById('board');
     if (boardElement) {
@@ -913,21 +940,17 @@ function handleGameState(payload: any) {
 
     // 4. OBSŁUGA FINiShOWANIA ANIMACJI KOSTKI
     const diceResult = state.LastRoll;
+    const activeDiceId = (myColor !== null && state.ColorToMove === myColor) ? 'bottom-dice' : 'top-dice';
 
-    renderDiceDots(diceResult);
+    renderDiceDotsTo(activeDiceId, diceResult);
     if (diceAnimationInterval && diceResult > 0) {
         clearInterval(diceAnimationInterval);
         diceAnimationInterval = null;
 
-        const diceElement = document.getElementById('dice-element')!;
-        if (diceElement) {
-            diceElement.classList.remove('shaking');
-        }
+        const diceElement = document.getElementById(diceAnimElementId);
+        if (diceElement) diceElement.classList.remove('shaking');
 
-        // Poprawiony selektor (używamy Twojego roll-btn)
-        if (rollButton) {
-            rollButton.disabled = false;
-        }
+        if (rollButton) rollButton.disabled = false;
     }
 
     // 5. RENDEROWANIE PLANSZY I FIGUR
@@ -969,9 +992,8 @@ function handleGameState(payload: any) {
 
 }
 
-function updatePlayerBanner(bannerId: string, playerId: number, colorClass: 'white' | 'black', skill: number) {
+function updatePlayerBanner(bannerId: string, playerId: number, colorClass: 'white' | 'black', skill: number, diceId: string) {
     const banner = document.getElementById(bannerId);
-
     if (!banner) return;
 
     const playerName = getPlayerNameById(playerId);
@@ -979,6 +1001,7 @@ function updatePlayerBanner(bannerId: string, playerId: number, colorClass: 'whi
     banner.innerHTML = `
         <div class="banner-color-cube ${colorClass}"></div>
         <span class="player-name">${playerName}</span>
+        <div class="dice mini" id="${diceId}"></div>
         <div class="banner-skill-badge">
             <span class="skill-icon">🎲</span>
             <span class="skill-label">Skill:</span>

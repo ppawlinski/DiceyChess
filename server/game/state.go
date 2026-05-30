@@ -13,14 +13,15 @@ type coordinateKey struct {
 }
 
 type GameState struct {
-	ColorToMove      Color
-	LastRoll         int
-	Budgets          [ColorLength]int
-	EnPassant        Coordinates
-	TurnStarted      bool
-	CapturedThisTurn map[Coordinates]bool
-	IsOver           bool
-	Winner           *Color // nil jeśli remis
+	ColorToMove         Color
+	LastRoll            int
+	Budgets             [ColorLength]int
+	EnPassant           Coordinates
+	TurnStarted         bool
+	CapturedThisTurn    map[Coordinates]bool
+	IsOver              bool
+	Winner              *Color // nil jeśli remis
+	TurnStartBoardHash  string
 }
 
 func NewGameState() *GameState {
@@ -60,38 +61,41 @@ func (gs *GameState) MarshalJSON() ([]byte, error) {
 	}
 
 	type Alias struct {
-		ColorToMove      Color
-		LastRoll         int
-		Budgets          [ColorLength]int
-		EnPassant        Coordinates
-		TurnStarted      bool
-		CapturedThisTurn map[string]bool
-		IsOver           bool
-		Winner           *Color
+		ColorToMove        Color
+		LastRoll           int
+		Budgets            [ColorLength]int
+		EnPassant          Coordinates
+		TurnStarted        bool
+		CapturedThisTurn   map[string]bool
+		IsOver             bool
+		Winner             *Color
+		TurnStartBoardHash string
 	}
 
 	return json.Marshal(Alias{
-		ColorToMove:      gs.ColorToMove,
-		LastRoll:         gs.LastRoll,
-		Budgets:          gs.Budgets,
-		EnPassant:        gs.EnPassant,
-		TurnStarted:      gs.TurnStarted,
-		CapturedThisTurn: captured,
-		IsOver:           gs.IsOver,
-		Winner:           gs.Winner,
+		ColorToMove:        gs.ColorToMove,
+		LastRoll:           gs.LastRoll,
+		Budgets:            gs.Budgets,
+		EnPassant:          gs.EnPassant,
+		TurnStarted:        gs.TurnStarted,
+		CapturedThisTurn:   captured,
+		IsOver:             gs.IsOver,
+		Winner:             gs.Winner,
+		TurnStartBoardHash: gs.TurnStartBoardHash,
 	})
 }
 
 func (gs *GameState) UnmarshalJSON(data []byte) error {
 	type Alias struct {
-		ColorToMove      Color
-		LastRoll         int
-		Budgets          [ColorLength]int
-		EnPassant        Coordinates
-		TurnStarted      bool
-		CapturedThisTurn map[string]bool
-		IsOver           bool
-		Winner           *Color
+		ColorToMove        Color
+		LastRoll           int
+		Budgets            [ColorLength]int
+		EnPassant          Coordinates
+		TurnStarted        bool
+		CapturedThisTurn   map[string]bool
+		IsOver             bool
+		Winner             *Color
+		TurnStartBoardHash string
 	}
 
 	var a Alias
@@ -106,6 +110,7 @@ func (gs *GameState) UnmarshalJSON(data []byte) error {
 	gs.TurnStarted = a.TurnStarted
 	gs.IsOver = a.IsOver
 	gs.Winner = a.Winner
+	gs.TurnStartBoardHash = a.TurnStartBoardHash
 
 	gs.CapturedThisTurn = make(map[Coordinates]bool)
 	for k, v := range a.CapturedThisTurn {

@@ -372,6 +372,11 @@ func (h *Hub) handleEndTurn(c *Client, payload json.RawMessage) {
 		return
 	}
 
+	if g.State.TurnStartBoardHash != "" && g.Board.Hash() == g.State.TurnStartBoardHash && g.CanAffordToMove() {
+		h.sendError(c, "plansza musi zmienić się przed zakończeniem tury")
+		return
+	}
+
 	if err := g.EndTurn(); err != nil {
 		h.sendError(c, err.Error())
 		return

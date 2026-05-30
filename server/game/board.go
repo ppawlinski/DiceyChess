@@ -1,6 +1,9 @@
 package game
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type Board struct {
 	fields       [BoardSize][BoardSize]Movable
@@ -54,6 +57,21 @@ func (b *Board) HasEnemy(c Coordinates, color Color) bool {
 func (b *Board) HasFriendly(c Coordinates, color Color) bool {
 	m := b.Get(c)
 	return m != nil && m.Piece().Color == color
+}
+
+func (b *Board) Hash() string {
+	var sb strings.Builder
+	for row := 0; row < BoardSize; row++ {
+		for col := 0; col < BoardSize; col++ {
+			m := b.fields[row][col]
+			if m == nil {
+				sb.WriteByte('.')
+			} else {
+				sb.WriteByte(byte('A' + int(m.Type())*2 + int(m.Piece().Color)))
+			}
+		}
+	}
+	return sb.String()
 }
 
 func (b *Board) Clone() *Board {

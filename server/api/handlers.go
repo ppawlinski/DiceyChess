@@ -137,7 +137,8 @@ func (h *Handler) CreateGame(w http.ResponseWriter, r *http.Request) {
 
 	// losowanie kolorów
 	whiteID, blackID := caller.ID, req.OpponentID
-	if time.Now().UnixNano()%2 == 0 {
+	var coinBuf [1]byte
+	if _, err := rand.Read(coinBuf[:]); err != nil || coinBuf[0]%2 == 0 {
 		whiteID, blackID = blackID, whiteID
 	}
 
