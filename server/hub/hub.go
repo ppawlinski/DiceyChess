@@ -399,15 +399,29 @@ func (h *Hub) handleGetHistory(c *Client, rawPayload json.RawMessage) {
 		return
 	}
 
+	var history game.History
+
 	g, ok := h.GameManager.Get(req.GameID)
-	if !ok {
-		h.sendError(c, "game not found")
-		return
+	if ok {
+		history = g.History
+	} else {
+		// Finished game — load from DB
+		dbGame, err := h.DB.GetGame(req.GameID)
+		if err != nil || dbGame == nil || dbGame.State == nil {
+			h.sendError(c, "game not found")
+			return
+		}
+		loaded, err := game.DeserializeGame(*dbGame.State)
+		if err != nil {
+			h.sendError(c, "failed to load game")
+			return
+		}
+		history = loaded.History
 	}
 
 	responsePayload, _ := json.Marshal(map[string]any{
 		"game_id": req.GameID,
-		"turns":   g.History,
+		"turns":   history,
 	})
 	c.send <- Message{Type: "history", Payload: responsePayload}
 }
@@ -421,23 +435,30 @@ func (h *Hub) handleJoinGame(c *Client, payload json.RawMessage) {
 		return
 	}
 
-	h.JoinGame(req.GameID, c.PlayerID)
-
-	// wyślij aktualny stan gry
 	g, ok := h.GameManager.Get(req.GameID)
-	if !ok {
-		h.sendError(c, "game not found")
+	if ok {
+		// Ongoing game — add to gameClients so future updates reach this client
+		h.JoinGame(req.GameID, c.PlayerID)
+		h.broadcastGameState(req.GameID, g, "game_state")
 		return
 	}
 
-	h.broadcastGameState(req.GameID, g, "game_state")
+	// Finished game — load from DB and send directly; no live updates needed
+	dbGame, err := h.DB.GetGame(req.GameID)
+	if err != nil || dbGame == nil || dbGame.State == nil {
+		h.sendError(c, "game not found")
+		return
+	}
+	loaded, err := game.DeserializeGame(*dbGame.State)
+	if err != nil {
+		h.sendError(c, "failed to load game")
+		return
+	}
+	msg := buildGameStateMsg(req.GameID, loaded, "game_state")
+	c.send <- msg
 }
 
-func (h *Hub) broadcastGameState(gameID int64, g *game.Game, messageType string) {
-	h.mu.RLock()
-	players := h.gameClients[gameID]
-	h.mu.RUnlock()
-
+func buildGameStateMsg(gameID int64, g *game.Game, messageType string) Message {
 	inCheck := game.KingInCheck(g.Board, g.State.ColorToMove)
 
 	type moveCoords struct {
@@ -462,8 +483,15 @@ func (h *Hub) broadcastGameState(gameID int64, g *game.Game, messageType string)
 		"in_check":  inCheck,
 		"last_move": lastMove,
 	})
-	msg := Message{Type: messageType, Payload: payload}
+	return Message{Type: messageType, Payload: payload}
+}
 
+func (h *Hub) broadcastGameState(gameID int64, g *game.Game, messageType string) {
+	h.mu.RLock()
+	players := h.gameClients[gameID]
+	h.mu.RUnlock()
+
+	msg := buildGameStateMsg(gameID, g, messageType)
 	for _, playerID := range players {
 		h.SendTo(playerID, msg)
 	}

@@ -23,6 +23,9 @@ let resolveDiceResponse: ((value: any) => void) | null = null;
 let myColor: number | null = null;
 let promotionPawnIndex: number | null = null;
 let currentBudget: number = 0;
+let isSpectator: boolean = false;
+let pendingOpenHistory: boolean = false;
+let activeMenuId: string | null = null;
 
 // --- HISTORIA ---
 interface Coords { Row: number; Col: number; }
@@ -35,6 +38,30 @@ let isHistoryMode: boolean = false;
 let lastGameStatePayload: any = null;
 let openHistoryPanelOnLoad = false;
 let pendingNavAction: 'prev' | null = null;
+
+function toggleMenu(menuId: string) {
+    const menu = document.getElementById(menuId);
+    if (!menu) return;
+    const opening = menu.style.display === 'none' || menu.style.display === '';
+    // Close any open menus first
+    document.querySelectorAll<HTMLElement>('.menu-dropdown').forEach(m => { m.style.display = 'none'; });
+    activeMenuId = null;
+    if (opening) {
+        menu.style.display = 'block';
+        activeMenuId = menuId;
+    }
+}
+
+document.addEventListener('click', (e) => {
+    if (!activeMenuId) return;
+    const target = e.target as HTMLElement;
+    if (!target.closest('.menu-dropdown') && !target.closest('.menu-btn')) {
+        document.querySelectorAll<HTMLElement>('.menu-dropdown').forEach(m => { m.style.display = 'none'; });
+        activeMenuId = null;
+    }
+});
+
+(window as any).toggleMenu = toggleMenu;
 
 const PROMOTION_PIECES = [
     { type: 4, icon: '♛', name: 'Hetman', cost: 4 },
@@ -279,10 +306,13 @@ async function initLobby() {
         <div class="screen">
             <div class="lobby-header">
                 <h3>Witaj w Lobby, <span id="lobby-username" style="color: #4caf50;">Gracz</span>!</h3>
-                <div style="display:flex;gap:8px;">
-                    <button onclick="showMyProfile()" class="rules-button">Profil 👤</button>
-                    <button onclick="showRulesModal()" class="rules-button">Zasady 📖</button>
-                    <button id="logout-btn" class="logout-button">Wyloguj się 🚪</button>
+                <div class="menu-wrapper">
+                    <button class="menu-btn" onclick="toggleMenu('lobby-menu')" title="Menu"></button>
+                    <div class="menu-dropdown" id="lobby-menu" style="display:none;">
+                        <button class="menu-dropdown-item" onclick="showMyProfile();toggleMenu('lobby-menu')">Profil 👤</button>
+                        <button class="menu-dropdown-item" onclick="showRulesModal();toggleMenu('lobby-menu')">Zasady 📖</button>
+                        <button class="menu-dropdown-item danger" id="logout-btn">Wyloguj się 🚪</button>
+                    </div>
                 </div>
             </div>
             
@@ -504,28 +534,39 @@ function hideRulesModal() {
 (window as any).showRulesModal = showRulesModal;
 
 function joinGame(gameId: number) {
-    console.log(`Próba dołączenia do gry o ID: ${gameId}`);
     activeGameId = gameId;
-
-    // 1. Przełączamy ekran na szachownicę (Vite wyrenderuje pustą planszę)
+    historyData = [];
+    historyFlatMoves = [];
+    historyCurrentIdx = -1;
+    isHistoryMode = false;
+    isSpectator = false;
     switchView('game');
-
-    // 2. Informujemy serwer, że chcemy stan tej gry.
-
     if (socket && socket.readyState === WebSocket.OPEN) {
-        console.log(`Wysyłam prośbę o synchronizację gry #${gameId}...`);
-
-        sendWSMessage("join_game", {
-            game_id: gameId
-        });
+        sendWSMessage("join_game", { game_id: gameId });
     }
+}
+
+function watchGame(gameId: number, autoHistory: boolean = false) {
+    pendingOpenHistory = autoHistory;
+    joinGame(gameId);
 }
 
 // --- 3. MOCKUP WIDOKU GRY ---
 function initGame() {
     app.innerHTML = `
         <div class="game-container">
-            <span id="game-turn-info">Ładowanie...</span>
+            <div class="game-top-bar">
+                <span id="game-turn-info">Ładowanie...</span>
+                <div id="spectator-badge" class="spectator-badge">👁 Obserwujesz</div>
+                <div class="menu-wrapper">
+                    <button class="menu-btn" onclick="toggleMenu('game-menu')" title="Menu"></button>
+                    <div class="menu-dropdown" id="game-menu" style="display:none;">
+                        <button class="menu-dropdown-item" onclick="openHistory();toggleMenu('game-menu')">Ruchy 📜</button>
+                        <button class="menu-dropdown-item" onclick="showRulesModal();toggleMenu('game-menu')">Zasady 📖</button>
+                        <button class="menu-dropdown-item danger" onclick="window.switchView('lobby');toggleMenu('game-menu')">Wyjdź do lobby</button>
+                    </div>
+                </div>
+            </div>
             <div class="player-banner" id="top-player-banner"></div>
             <div class="board-wrapper">
                 <div class="chessboard" id="board"></div>
@@ -552,11 +593,6 @@ function initGame() {
                 <span id="nav-pos" class="nav-pos">—</span>
                 <button id="nav-next" class="nav-arrow-btn" onclick="navHistoryNext()">▶</button>
                 <button id="nav-latest" class="nav-arrow-btn" onclick="navHistoryLatest()" title="Aktualny ruch">▶|</button>
-            </div>
-            <div style="display:flex;gap:8px;">
-                <button id="history-btn" onclick="openHistory()" class="rules-button">Ruchy 📜</button>
-                <button onclick="showRulesModal()" class="rules-button">Zasady 📖</button>
-                <button onclick="window.switchView('lobby')">Wyjdź do lobby</button>
             </div>
         </div>
     `;
@@ -965,17 +1001,22 @@ function handleGameState(payload: any) {
 
     const state = payload.state;
     const currentUserId = currentPlayer?.id;
-    myColor = (payload.white_id === currentUserId) ? 0 : 1;
+    const isParticipant = payload.white_id === currentUserId || payload.black_id === currentUserId;
+    isSpectator = !isParticipant;
+    myColor = isSpectator ? 0 : (payload.white_id === currentUserId) ? 0 : 1;
     currentBudget = state?.Budgets?.[myColor] ?? 0;
 
+    const spectatorBadge = document.getElementById('spectator-badge');
+    if (spectatorBadge) spectatorBadge.style.display = isSpectator ? 'flex' : 'none';
+
     if (state && state.IsOver) {
-        console.log("Gra zakończona! Wyłoniono zwycięzcę.");
-
-        // Pobieramy ID lub kolor zwycięzcy
-        const winnerColor = state.Winner; // 0 = Biali, 1 = Czarni
-
-        // Odpalamy funkcję końca gry
-        handleGameOver(winnerColor);
+        const winnerColor = state.Winner;
+        if (!isSpectator) {
+            handleGameOver(winnerColor);
+        } else {
+            const winnerName = winnerColor === 0 ? 'Białe' : winnerColor === 1 ? 'Czarne' : null;
+            showSnackbar(winnerName ? `Koniec gry — wygrały ${winnerName}` : 'Koniec gry — remis', 'info');
+        }
     }
 
     console.log("Otrzymano stan gry z Go:", payload);
@@ -1124,6 +1165,13 @@ function handleGameState(payload: any) {
                 }
             }
         }
+    }
+
+    // Auto-open history panel (e.g. when viewing a finished game)
+    if (pendingOpenHistory) {
+        pendingOpenHistory = false;
+        openHistoryPanelOnLoad = true;
+        openHistory();
     }
 
 }
@@ -1556,13 +1604,13 @@ async function showProfileModal(playerId: number) {
             const oppId = g.white_id === player.id ? g.black_id : g.white_id;
             const oppName = getPlayerNameById(oppId);
             const colorIcon = g.white_id === player.id ? '⬜' : '⬛';
-            const isMine = currentPlayer && (currentPlayer.id === g.white_id || currentPlayer.id === g.black_id);
-            const joinBtn = isMine
+            const iAmParticipant = currentPlayer && (currentPlayer.id === g.white_id || currentPlayer.id === g.black_id);
+            const actionBtn = iAmParticipant
                 ? `<button class="play-with-btn" style="font-size:12px;padding:4px 10px;" onclick="handleJoinClick(${g.id});hideProfileModal()">Dołącz</button>`
-                : '';
+                : `<button class="play-with-btn" style="font-size:12px;padding:4px 10px;background:#70a1ff;" onclick="watchGame(${g.id});hideProfileModal()">Oglądaj</button>`;
             return `<div class="profile-game-row">
                 <span>${colorIcon} vs <b>${oppName}</b> <span class="profile-game-id">#${g.id}</span></span>
-                ${joinBtn}
+                ${actionBtn}
             </div>`;
         };
 
@@ -1571,7 +1619,7 @@ async function showProfileModal(playerId: number) {
             const oppName = getPlayerNameById(oppId);
             const colorIcon = g.white_id === player.id ? '⬜' : '⬛';
             let resultLabel = 'Remis', resultClass = 'result-draw';
-            if (g.result !== 'draw') {
+            if (g.result !== 'draw' && g.result != null) {
                 const won = (g.white_id === player.id && g.result === 'white') ||
                             (g.black_id === player.id && g.result === 'black');
                 resultLabel = won ? 'Wygrana' : 'Przegrana';
@@ -1581,6 +1629,7 @@ async function showProfileModal(playerId: number) {
             return `<div class="profile-game-row">
                 <span>${colorIcon} vs <b>${oppName}</b> <span class="profile-game-id">#${g.id}</span></span>
                 <span class="${resultClass}">${resultLabel}</span>
+                <button class="rules-button" style="font-size:11px;padding:3px 10px;" onclick="watchGame(${g.id},true);hideProfileModal()">Historia</button>
                 ${date ? `<span class="profile-game-date">${date}</span>` : ''}
             </div>`;
         };
@@ -1646,6 +1695,7 @@ function showMyProfile() {
 (window as any).showProfileModal = showProfileModal;
 (window as any).hideProfileModal = hideProfileModal;
 (window as any).showMyProfile = showMyProfile;
+(window as any).watchGame = watchGame;
 
 // --- SYSTEM PRZEŁĄCZANIA WIDOKÓW (ROUTER) ---
 export function switchView(viewName: 'login' | 'lobby' | 'game') {
