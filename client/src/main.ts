@@ -25,10 +25,11 @@ let promotionPawnIndex: number | null = null;
 let currentBudget: number = 0;
 
 // --- HISTORIA ---
-interface HistoryMoveRecord { notation: string; board: string; }
+interface Coords { Row: number; Col: number; }
+interface HistoryMoveRecord { notation: string; board: string; from?: Coords; to?: Coords; }
 interface HalfTurn { num: number; color: number; roll: number; moves: HistoryMoveRecord[]; }
 let historyData: HalfTurn[] = [];
-let historyFlatMoves: Array<{ htIdx: number; mIdx: number; label: string; board: string }> = [];
+let historyFlatMoves: Array<{ htIdx: number; mIdx: number; label: string; board: string; from?: Coords; to?: Coords }> = [];
 let historyCurrentIdx: number = -1;
 let isHistoryMode: boolean = false;
 let lastGameStatePayload: any = null;
@@ -1065,6 +1066,7 @@ function handleGameState(payload: any) {
     // 5. RENDEROWANIE PLANSZY I FIGUR
     const squares = document.querySelectorAll('.square');
 
+    const allSquares = squares; // alias for post-loop use
     for (let row = 0; row < 8; row++) {
         for (let col = 0; col < 8; col++) {
             const index = row * 8 + col;
@@ -1073,6 +1075,7 @@ function handleGameState(payload: any) {
 
             square.innerHTML = '';
             delete square.dataset.promotable;
+            square.classList.remove('last-move-from', 'last-move-to', 'king-in-check');
 
             const pieceData = fields[row][col];
             if (!pieceData) continue;
@@ -1090,11 +1093,34 @@ function handleGameState(payload: any) {
                     ((myColor === 0 && row === 0) || (myColor === 1 && row === 7));
                 if (isPromotable) {
                     square.dataset.promotable = 'true';
+                    const badge = document.createElement('div');
+                    badge.className = 'promo-badge';
+                    badge.textContent = '▲';
+                    square.appendChild(badge);
                 } else {
                     setupPieceDragAndDrop(pieceElement, index);
                 }
             } else {
                 pieceElement.style.cursor = 'not-allowed';
+            }
+        }
+    }
+
+    // Last move highlight
+    if (payload.last_move) {
+        const fromIdx = coordsToIndex(payload.last_move.from);
+        const toIdx = coordsToIndex(payload.last_move.to);
+        applyMoveHighlight(allSquares, fromIdx, toIdx);
+    }
+
+    // King in check — only highlight own king when it's our turn and we're in check
+    if (payload.in_check && isMyTurn) {
+        for (let row = 0; row < 8; row++) {
+            for (let col = 0; col < 8; col++) {
+                const pieceData = fields[row][col];
+                if (pieceData && pieceData.type === 5 && pieceData.color === myColor) {
+                    (allSquares[row * 8 + col] as HTMLElement)?.classList.add('king-in-check');
+                }
             }
         }
     }
@@ -1281,7 +1307,7 @@ function handleHistory(payload: any) {
     historyData.forEach((ht, htIdx) => {
         ht.moves.forEach((m) => {
             const fi = historyFlatMoves.length;
-            historyFlatMoves.push({ htIdx, mIdx: fi, label: m.notation, board: m.board });
+            historyFlatMoves.push({ htIdx, mIdx: fi, label: m.notation, board: m.board, from: m.from, to: m.to });
         });
     });
 
@@ -1312,10 +1338,15 @@ function navHistoryPrev() {
         return;
     }
     const next = isHistoryMode ? historyCurrentIdx - 1 : historyFlatMoves.length - 1;
-    if (next < 0) return;
+    if (next < -1) return;
     historyCurrentIdx = next;
     isHistoryMode = true;
-    renderHistoryBoard(historyFlatMoves[historyCurrentIdx].board);
+    if (next === -1) {
+        renderInitialBoard();
+    } else {
+        const m = historyFlatMoves[next];
+        renderHistoryBoard(m.board, m.from ? coordsToIndex(m.from) : null, m.to ? coordsToIndex(m.to) : null);
+    }
     updateNavUI();
     updateHistoryPanelSelection();
 }
@@ -1327,7 +1358,8 @@ function navHistoryNext() {
         navHistoryLatest();
     } else {
         historyCurrentIdx = next;
-        renderHistoryBoard(historyFlatMoves[historyCurrentIdx].board);
+        const m = historyFlatMoves[historyCurrentIdx];
+        renderHistoryBoard(m.board, m.from ? coordsToIndex(m.from) : null, m.to ? coordsToIndex(m.to) : null);
         updateNavUI();
         updateHistoryPanelSelection();
     }
@@ -1341,22 +1373,22 @@ function navHistoryLatest() {
 }
 
 function updateNavUI() {
-    const prevBtn  = document.getElementById('nav-prev')   as HTMLButtonElement | null;
-    const nextBtn  = document.getElementById('nav-next')   as HTMLButtonElement | null;
+    const prevBtn = document.getElementById('nav-prev') as HTMLButtonElement | null;
+    const nextBtn = document.getElementById('nav-next') as HTMLButtonElement | null;
     const latestBtn = document.getElementById('nav-latest') as HTMLButtonElement | null;
-    const posEl    = document.getElementById('nav-pos');
+    const posEl = document.getElementById('nav-pos');
     if (!prevBtn || !nextBtn || !latestBtn || !posEl) return;
 
     const total = historyFlatMoves.length;
     if (isHistoryMode && total > 0) {
-        posEl.textContent = `${historyCurrentIdx + 1}/${total}`;
-        prevBtn.disabled  = historyCurrentIdx <= 0;
-        nextBtn.disabled  = false;
+        posEl.textContent = historyCurrentIdx === -1 ? `0/${total}` : `${historyCurrentIdx + 1}/${total}`;
+        prevBtn.disabled = historyCurrentIdx <= -1;
+        nextBtn.disabled = false;
         latestBtn.disabled = false;
     } else {
         posEl.textContent = total > 0 ? `${total}/${total}` : '—';
-        prevBtn.disabled  = total === 0;
-        nextBtn.disabled  = true;
+        prevBtn.disabled = total === 0;
+        nextBtn.disabled = true;
         latestBtn.disabled = true;
     }
 }
@@ -1370,10 +1402,10 @@ function updateHistoryPanelSelection() {
     });
     const prev = document.getElementById('hist-prev') as HTMLButtonElement | null;
     const next = document.getElementById('hist-next') as HTMLButtonElement | null;
-    const pos  = document.querySelector<HTMLElement>('.hist-pos');
-    if (prev) prev.disabled = historyCurrentIdx <= 0;
+    const pos = document.querySelector<HTMLElement>('.hist-pos');
+    if (prev) prev.disabled = historyCurrentIdx <= -1;
     if (next) next.disabled = historyCurrentIdx >= total - 1;
-    if (pos)  pos.textContent = `${historyCurrentIdx + 1} / ${total}`;
+    if (pos) pos.textContent = `${historyCurrentIdx + 1} / ${total}`;
     setTimeout(() => document.querySelector('.hist-move-active')?.scrollIntoView({ block: 'nearest' }), 0);
 }
 
@@ -1408,7 +1440,7 @@ function showHistoryOverlay() {
             </div>
             <div class="history-move-list" id="history-move-list">${listHTML || '<span style="color:#797977;font-size:13px;">Brak ruchów</span>'}</div>
             <div class="history-nav">
-                <button id="hist-prev" class="hist-nav-btn" ${cur <= 0 ? 'disabled' : ''}>◀</button>
+                <button id="hist-prev" class="hist-nav-btn" ${cur <= -1 ? 'disabled' : ''}>◀</button>
                 <span class="hist-pos">${total > 0 ? cur + 1 : 0} / ${total}</span>
                 <button id="hist-next" class="hist-nav-btn" ${cur >= total - 1 ? 'disabled' : ''}>▶</button>
                 <button id="hist-exit-btn" class="rules-button" style="margin-left:8px;">Zamknij</button>
@@ -1433,7 +1465,8 @@ function showHistoryOverlay() {
             const fi = parseInt((btn as HTMLElement).dataset.fidx!);
             historyCurrentIdx = fi;
             isHistoryMode = true;
-            renderHistoryBoard(historyFlatMoves[fi].board);
+            const m = historyFlatMoves[fi];
+            renderHistoryBoard(m.board, m.from ? coordsToIndex(m.from) : null, m.to ? coordsToIndex(m.to) : null);
             updateNavUI();
             updateHistoryPanelSelection();
         });
@@ -1442,7 +1475,37 @@ function showHistoryOverlay() {
     setTimeout(() => document.querySelector('.hist-move-active')?.scrollIntoView({ block: 'nearest' }), 0);
 }
 
-function renderHistoryBoard(boardJSON: string) {
+function applyMoveHighlight(squares: NodeListOf<Element>, fromIdx: number | null | undefined, toIdx: number | null | undefined) {
+    squares.forEach(s => s.classList.remove('last-move-from', 'last-move-to'));
+    if (fromIdx != null) (squares[fromIdx] as HTMLElement)?.classList.add('last-move-from');
+    if (toIdx != null && toIdx !== fromIdx) (squares[toIdx] as HTMLElement)?.classList.add('last-move-to');
+}
+
+const INITIAL_BACK_RANK = [3, 2, 1, 4, 5, 1, 2, 3];
+
+function renderInitialBoard() {
+    const squares = document.querySelectorAll('.square');
+    for (let row = 0; row < 8; row++) {
+        for (let col = 0; col < 8; col++) {
+            const square = squares[row * 8 + col] as HTMLElement;
+            if (!square) continue;
+            square.innerHTML = '';
+            square.classList.remove('last-move-from', 'last-move-to', 'king-in-check');
+            let pieceData: { type: number; color: number } | null = null;
+            if (row === 0) pieceData = { type: INITIAL_BACK_RANK[col], color: 1 };
+            else if (row === 1) pieceData = { type: 0, color: 1 };
+            else if (row === 6) pieceData = { type: 0, color: 0 };
+            else if (row === 7) pieceData = { type: INITIAL_BACK_RANK[col], color: 0 };
+            if (!pieceData) continue;
+            const pieceEl = document.createElement('div');
+            pieceEl.className = `piece ${pieceData.color === 0 ? 'white' : 'black'}`;
+            pieceEl.innerText = getPieceIcon(pieceData.type);
+            square.appendChild(pieceEl);
+        }
+    }
+}
+
+function renderHistoryBoard(boardJSON: string, fromIdx?: number | null, toIdx?: number | null) {
     try {
         const boardData = JSON.parse(boardJSON);
         const fields: any[][] = boardData.fields;
@@ -1453,6 +1516,7 @@ function renderHistoryBoard(boardJSON: string) {
                 const square = squares[index] as HTMLElement;
                 if (!square) continue;
                 square.innerHTML = '';
+                square.classList.remove('last-move-from', 'last-move-to', 'king-in-check');
                 const pieceData = fields[row][col];
                 if (!pieceData) continue;
                 const pieceElement = document.createElement('div');
@@ -1461,6 +1525,7 @@ function renderHistoryBoard(boardJSON: string) {
                 square.appendChild(pieceElement);
             }
         }
+        applyMoveHighlight(squares, fromIdx, toIdx);
     } catch (e) {
         console.error('Błąd renderowania historycznej planszy:', e);
     }

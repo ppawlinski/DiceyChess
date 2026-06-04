@@ -1014,3 +1014,31 @@ li {
     color: #ffd700;
     font-weight: bold;
 }
+
+/* Last move highlight (from → to) */
+.square.last-move-from { background-color: rgba(205, 180, 50, 0.45) !important; }
+.square.last-move-to   { background-color: rgba(205, 180, 50, 0.65) !important; }
+
+/* King in check */
+.square.king-in-check {
+    background-color: rgba(210, 40, 40, 0.82) !important;
+    box-shadow: inset 0 0 0 3px #ff3030;
+}
+
+/* Promotion badge – small green chevron on promotable pawn */
+.promo-badge {
+    position: absolute;
+    bottom: 2px;
+    right: 3px;
+    font-size: 11px;
+    line-height: 1;
+    color: #2ed573;
+    font-weight: bold;
+    pointer-events: none;
+    z-index: 6;
+    text-shadow: 0 0 4px rgba(0,0,0,0.8);
+}
+
+.chessboard.flipped .promo-badge {
+    transform: rotate(180deg);
+}

@@ -53,7 +53,7 @@ func (g *Game) StartTurn() {
 	})
 }
 
-func (g *Game) recordMoveToHistory(notation, boardJSON string) {
+func (g *Game) recordMoveToHistory(notation, boardJSON string, from, to Coordinates) {
 	if len(g.History) == 0 {
 		return
 	}
@@ -61,6 +61,8 @@ func (g *Game) recordMoveToHistory(notation, boardJSON string) {
 	last.Moves = append(last.Moves, MoveRecord{
 		Notation:  notation,
 		BoardJSON: boardJSON,
+		From:      from,
+		To:        to,
 	})
 }
 
@@ -210,7 +212,7 @@ func (g *Game) MakeMove(req MoveRequest) error {
 	}
 	opponentInCheck := KingInCheck(g.Board, opponent)
 	notation := MoveToAlgebraic(piece.Type(), req.From, req.To, isCapture, opponentInCheck, false)
-	g.recordMoveToHistory(notation, boardToJSON(g.Board))
+	g.recordMoveToHistory(notation, boardToJSON(g.Board), req.From, req.To)
 
 	g.State.SpendBudget(piece.Type(), isInCheck)
 	if g.State.Budgets[g.State.ColorToMove] == 0 {
@@ -307,7 +309,7 @@ func (g *Game) Promote(req PromoteRequest) error {
 		byte('a' + req.At.Col),
 		byte('0' + (8 - req.At.Row)),
 	}) + PromotionSuffix(req.PromoteTo) + checkSuffix(opponentInCheck, false)
-	g.recordMoveToHistory(promoNotation, boardToJSON(g.Board))
+	g.recordMoveToHistory(promoNotation, boardToJSON(g.Board), req.At, req.At)
 
 	if g.State.Budgets[g.State.ColorToMove] == 0 {
 		g.EndTurn()

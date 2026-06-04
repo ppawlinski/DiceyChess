@@ -438,12 +438,29 @@ func (h *Hub) broadcastGameState(gameID int64, g *game.Game, messageType string)
 	players := h.gameClients[gameID]
 	h.mu.RUnlock()
 
+	inCheck := game.KingInCheck(g.Board, g.State.ColorToMove)
+
+	type moveCoords struct {
+		From game.Coordinates `json:"from"`
+		To   game.Coordinates `json:"to"`
+	}
+	var lastMove *moveCoords
+	if len(g.History) > 0 {
+		lastHT := g.History[len(g.History)-1]
+		if len(lastHT.Moves) > 0 {
+			m := lastHT.Moves[len(lastHT.Moves)-1]
+			lastMove = &moveCoords{From: m.From, To: m.To}
+		}
+	}
+
 	payload, _ := json.Marshal(map[string]any{
-		"game_id":  gameID,
-		"board":    g.Board,
-		"state":    g.State,
-		"white_id": g.WhiteID,
-		"black_id": g.BlackID,
+		"game_id":   gameID,
+		"board":     g.Board,
+		"state":     g.State,
+		"white_id":  g.WhiteID,
+		"black_id":  g.BlackID,
+		"in_check":  inCheck,
+		"last_move": lastMove,
 	})
 	msg := Message{Type: messageType, Payload: payload}
 

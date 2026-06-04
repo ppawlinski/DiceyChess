@@ -8,8 +8,10 @@ import (
 
 // MoveRecord stores notation and board snapshot for one move.
 type MoveRecord struct {
-	Notation  string `json:"notation"`
-	BoardJSON string `json:"board"`
+	Notation  string      `json:"notation"`
+	BoardJSON string      `json:"board"`
+	From      Coordinates `json:"from"`
+	To        Coordinates `json:"to"`
 }
 
 // HalfTurn holds all moves by one player in a single turn.
