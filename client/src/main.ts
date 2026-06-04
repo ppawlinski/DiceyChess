@@ -280,6 +280,7 @@ async function initLobby() {
             <div class="lobby-header">
                 <h3>Witaj w Lobby, <span id="lobby-username" style="color: #4caf50;">Gracz</span>!</h3>
                 <div style="display:flex;gap:8px;">
+                    <button onclick="showMyProfile()" class="rules-button">Profil 👤</button>
                     <button onclick="showRulesModal()" class="rules-button">Zasady 📖</button>
                     <button id="logout-btn" class="logout-button">Wyloguj się 🚪</button>
                 </div>
@@ -347,7 +348,7 @@ function renderLobbyLists() {
     } else {
         onlineList.innerHTML = onlineUsers.map(p => `
             <li class="player-item" data-id="${p.id || p.ID}" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                <span>🟢 <b>${p.name || p.Name}</b></span>
+                <span>🟢 <button class="profile-name-btn" onclick="showProfileModal(${p.id || p.ID})">${p.name || p.Name}</button></span>
                 <button class="play-with-btn" onclick="handleChallengeClick(${p.id || p.ID})">Wyzwij</button>
             </li>
         `).join('');
@@ -359,7 +360,7 @@ function renderLobbyLists() {
     } else {
         offlineList.innerHTML = offlineUsers.map(p => `
             <li style="margin-bottom: 5px; color: #bbb;">
-                <span>🔴 ${p.name || p.Name}</span>
+                <span>🔴 <button class="profile-name-btn" onclick="showProfileModal(${p.id || p.ID})" style="color:#bbb;">${p.name || p.Name}</button></span>
                 <button class="play-with-btn" onclick="handleChallengeClick(${p.id || p.ID})">Wyzwij</button>
             </li>
         `).join('');
@@ -1535,6 +1536,116 @@ function renderHistoryBoard(boardJSON: string, fromIdx?: number | null, toIdx?: 
 (window as any).navHistoryPrev = navHistoryPrev;
 (window as any).navHistoryNext = navHistoryNext;
 (window as any).navHistoryLatest = navHistoryLatest;
+
+// --- PROFIL GRACZA ---
+
+async function showProfileModal(playerId: number) {
+    try {
+        const res = await fetch(`${API_URL}/profile?player_id=${playerId}`);
+        if (!res.ok) { showSnackbar('Nie udało się pobrać profilu', 'error'); return; }
+        const data = await res.json();
+        const { player, stats, games } = data;
+
+        const isOwnProfile = currentPlayer?.id === player.id;
+        const joinDate = new Date(player.created_at).toLocaleDateString('pl-PL');
+
+        const currentGames: any[] = (games || []).filter((g: any) => g.status === 'ongoing');
+        const pastGames: any[] = (games || []).filter((g: any) => g.status === 'finished');
+
+        const renderCurrentGame = (g: any) => {
+            const oppId = g.white_id === player.id ? g.black_id : g.white_id;
+            const oppName = getPlayerNameById(oppId);
+            const colorIcon = g.white_id === player.id ? '⬜' : '⬛';
+            const isMine = currentPlayer && (currentPlayer.id === g.white_id || currentPlayer.id === g.black_id);
+            const joinBtn = isMine
+                ? `<button class="play-with-btn" style="font-size:12px;padding:4px 10px;" onclick="handleJoinClick(${g.id});hideProfileModal()">Dołącz</button>`
+                : '';
+            return `<div class="profile-game-row">
+                <span>${colorIcon} vs <b>${oppName}</b> <span class="profile-game-id">#${g.id}</span></span>
+                ${joinBtn}
+            </div>`;
+        };
+
+        const renderPastGame = (g: any) => {
+            const oppId = g.white_id === player.id ? g.black_id : g.white_id;
+            const oppName = getPlayerNameById(oppId);
+            const colorIcon = g.white_id === player.id ? '⬜' : '⬛';
+            let resultLabel = 'Remis', resultClass = 'result-draw';
+            if (g.result !== 'draw') {
+                const won = (g.white_id === player.id && g.result === 'white') ||
+                            (g.black_id === player.id && g.result === 'black');
+                resultLabel = won ? 'Wygrana' : 'Przegrana';
+                resultClass = won ? 'result-win' : 'result-loss';
+            }
+            const date = g.finished_at ? new Date(g.finished_at).toLocaleDateString('pl-PL') : '';
+            return `<div class="profile-game-row">
+                <span>${colorIcon} vs <b>${oppName}</b> <span class="profile-game-id">#${g.id}</span></span>
+                <span class="${resultClass}">${resultLabel}</span>
+                ${date ? `<span class="profile-game-date">${date}</span>` : ''}
+            </div>`;
+        };
+
+        const currentGamesHTML = currentGames.length
+            ? currentGames.map(renderCurrentGame).join('')
+            : '<p class="profile-empty">Brak trwających gier</p>';
+
+        const pastGamesHTML = pastGames.length
+            ? pastGames.slice(0, 30).map(renderPastGame).join('')
+            : '<p class="profile-empty">Brak zakończonych gier</p>';
+
+        let overlay = document.getElementById('profile-modal-overlay') as HTMLElement | null;
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'profile-modal-overlay';
+            overlay.className = 'game-modal-overlay';
+            overlay.style.zIndex = '1000000';
+            document.body.appendChild(overlay);
+        }
+
+        overlay.innerHTML = `
+            <div class="game-modal-content profile-modal-content">
+                <button class="modal-close-btn" id="profile-close-btn">✕</button>
+                <div class="profile-header">
+                    <span class="profile-name">${isOwnProfile ? '👤 ' : ''}${player.name}</span>
+                    <span class="profile-since">Gracz od ${joinDate}</span>
+                </div>
+                <div class="profile-stats">
+                    <div class="stat-box win"><div class="stat-num">${stats.wins}</div><div class="stat-label">Wygrane</div></div>
+                    <div class="stat-box draw"><div class="stat-num">${stats.draws}</div><div class="stat-label">Remisy</div></div>
+                    <div class="stat-box loss"><div class="stat-num">${stats.losses}</div><div class="stat-label">Przegrane</div></div>
+                </div>
+                <div class="profile-section">
+                    <h3>Trwające gry</h3>
+                    ${currentGamesHTML}
+                </div>
+                <div class="profile-section">
+                    <h3>Historia gier</h3>
+                    ${pastGamesHTML}
+                </div>
+            </div>
+        `;
+
+        overlay.style.display = 'flex';
+        document.getElementById('profile-close-btn')!.addEventListener('click', hideProfileModal);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) hideProfileModal(); });
+    } catch (err) {
+        console.error('Błąd ładowania profilu:', err);
+        showSnackbar('Błąd ładowania profilu', 'error');
+    }
+}
+
+function hideProfileModal() {
+    const overlay = document.getElementById('profile-modal-overlay');
+    if (overlay) overlay.style.display = 'none';
+}
+
+function showMyProfile() {
+    if (currentPlayer) showProfileModal(currentPlayer.id);
+}
+
+(window as any).showProfileModal = showProfileModal;
+(window as any).hideProfileModal = hideProfileModal;
+(window as any).showMyProfile = showMyProfile;
 
 // --- SYSTEM PRZEŁĄCZANIA WIDOKÓW (ROUTER) ---
 export function switchView(viewName: 'login' | 'lobby' | 'game') {

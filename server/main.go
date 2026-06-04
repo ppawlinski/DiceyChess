@@ -30,6 +30,7 @@ func main() {
 
 	http.HandleFunc("/api/login", corsMiddleware(handler.Login))
 	http.HandleFunc("/api/players", corsMiddleware(handler.GetPlayers))
+	http.HandleFunc("/api/profile", corsMiddleware(handler.GetPlayerProfile))
 	http.HandleFunc("/api/games", corsMiddleware(handler.GetGames))
 	http.HandleFunc("/api/games/create", corsMiddleware(handler.CreateGame))
 	http.HandleFunc("/ws", corsMiddleware(handler.ServeWS))

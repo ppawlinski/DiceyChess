@@ -191,3 +191,42 @@ func (d *DB) FinishGame(id int64, result string) error {
 	`, result, id)
 	return err
 }
+
+func (d *DB) GetPlayerByID(id int64) (*models.Player, error) {
+	row := d.conn.QueryRow(`SELECT id, name, token, created_at FROM players WHERE id = ?`, id)
+	var p models.Player
+	err := row.Scan(&p.ID, &p.Name, &p.Token, &p.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+type PlayerStats struct {
+	Wins   int `json:"wins"`
+	Draws  int `json:"draws"`
+	Losses int `json:"losses"`
+}
+
+func (d *DB) GetPlayerStats(playerID int64) (PlayerStats, error) {
+	var stats PlayerStats
+	row := d.conn.QueryRow(`
+		SELECT
+			COALESCE(SUM(CASE
+				WHEN (white_id = ? AND result = 'white') OR (black_id = ? AND result = 'black') THEN 1
+				ELSE 0
+			END), 0),
+			COALESCE(SUM(CASE WHEN result = 'draw' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE
+				WHEN (white_id = ? AND result = 'black') OR (black_id = ? AND result = 'white') THEN 1
+				ELSE 0
+			END), 0)
+		FROM games
+		WHERE (white_id = ? OR black_id = ?) AND status = 'finished'
+	`, playerID, playerID, playerID, playerID, playerID, playerID)
+	err := row.Scan(&stats.Wins, &stats.Draws, &stats.Losses)
+	return stats, err
+}

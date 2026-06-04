@@ -173,6 +173,52 @@ func (h *Handler) CreateGame(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) GetPlayerProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	playerIDStr := r.URL.Query().Get("player_id")
+	if playerIDStr == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "brak player_id"})
+		return
+	}
+
+	playerID, err := strconv.ParseInt(playerIDStr, 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid player_id"})
+		return
+	}
+
+	player, err := h.DB.GetPlayerByID(playerID)
+	if err != nil || player == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "gracz nie znaleziony"})
+		return
+	}
+
+	stats, err := h.DB.GetPlayerStats(playerID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server error"})
+		return
+	}
+
+	games, err := h.DB.GetGames(&playerID, false)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "server error"})
+		return
+	}
+	if games == nil {
+		games = []models.Game{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"player": player,
+		"stats":  stats,
+		"games":  games,
+	})
+}
+
 func (h *Handler) GetGames(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
